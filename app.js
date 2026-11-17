@@ -1,3 +1,4 @@
+javascript
 // 1. 5-Second Hollywood Hacker Decryption Intro Controller
 const statusMessages = [
     "BYPASSING PROXY PROTOCOLS...",
@@ -22,36 +23,51 @@ setTimeout(() => {
     }
 }, 5000);
 
-// 2. Red & Green Matrix Hacker Code Rain Background
+// 2. Static Grand Electric Blue, Purple & Bright Pink Cyber Code Texture (No Movement)
 const canvas = document.getElementById("bg-canvas");
 const ctx = canvas.getContext("2d");
-function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
-window.addEventListener("resize", resizeCanvas);
-resizeCanvas();
 
-const chars = "01アイウエオカキクケコSCAMSENSE$#@%&*";
-const fontSize = 15;
-let columns = Math.floor(canvas.width / fontSize);
-let drops = Array(columns).fill(1);
+function renderStaticCyberBackdrop() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-function drawHackerMatrix() {
-    ctx.fillStyle = "rgba(5, 2, 5, 0.14)";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.font = fontSize + "px monospace";
+    const glyphs = "01アイウエオカキクケコ01011001XYZ<>/{}[]";
+    const colors = [
+        "rgba(255, 20, 147, 0.34)",  // Extra Bright Neon Pink
+        "rgba(255, 60, 180, 0.30)",  // Hot Magenta Pink
+        "rgba(0, 243, 255, 0.30)",   // Electric Cyan Blue
+        "rgba(99, 102, 241, 0.26)",  // Deep Cyber Indigo
+        "rgba(192, 38, 211, 0.30)"   // Vibrant Purple
+    ];
 
-    for (let i = 0; i < drops.length; i++) {
-        const text = chars[Math.floor(Math.random() * chars.length)];
-        // Alternate between Hacker Green and Crimson Red
-        ctx.fillStyle = (i % 4 === 0) ? "rgba(255, 30, 86, 0.55)" : "rgba(0, 255, 102, 0.45)";
-        ctx.fillText(text, i * fontSize, drops[i] * fontSize);
+    const colWidth = 18;
+    const rowHeight = 16;
+    const cols = Math.ceil(canvas.width / colWidth);
+    const rows = Math.ceil(canvas.height / rowHeight);
 
-        if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
-            drops[i] = 0;
+    ctx.font = "600 12px 'Fira Code', monospace";
+
+    for (let c = 0; c < cols; c++) {
+        if (Math.random() > 0.68) continue;
+        const colColor = colors[Math.floor(Math.random() * colors.length)];
+        const startRow = Math.floor(Math.random() * 8);
+        const endRow = rows - Math.floor(Math.random() * 8);
+
+        ctx.fillStyle = colColor.replace(/0\.\d+\)/, "0.06)");
+        ctx.fillRect(c * colWidth, startRow * rowHeight, 10, (endRow - startRow) * rowHeight);
+
+        for (let r = startRow; r < endRow; r++) {
+            if (Math.random() > 0.72) continue;
+            const char = glyphs[Math.floor(Math.random() * glyphs.length)];
+            ctx.fillStyle = colColor;
+            ctx.fillText(char, c * colWidth, r * rowHeight);
         }
-        drops[i]++;
     }
 }
-setInterval(drawHackerMatrix, 45);
+
+window.addEventListener("resize", renderStaticCyberBackdrop);
+renderStaticCyberBackdrop();
 
 // 3. True 3D Interactive Tilt Effect on Hover
 document.querySelectorAll(".float-card").forEach(card => {
@@ -66,45 +82,89 @@ document.querySelectorAll(".float-card").forEach(card => {
     });
 });
 
-// 4. Backend AI Scanner Logic
-const API_BASE = "/api/scan";
+// 4. Popup Shield & Cinematic Verdict Controller
+let typingTimer = null;
 
+function closePopup() {
+    document.getElementById("scanPopupOverlay").classList.add("hidden");
+    if (typingTimer) clearInterval(typingTimer);
+}
 
-function setScanning(name) {
-    document.getElementById("resultSection").scrollIntoView({ behavior: "smooth" });
-    document.getElementById("scanStatus").innerText = "SCANNING " + name + "...";
-    document.getElementById("riskLevelBadge").innerText = "ANALYZING";
-    document.getElementById("riskScoreText").innerText = "...";
-    document.getElementById("aiResultContainer").innerHTML = "<p style='color:#00ff66;font-family:monospace;'>> [SYSTEM] Intercepting payload & executing AI deep scan...</p>";
+function setScanning(moduleName) {
+    if (typingTimer) clearInterval(typingTimer);
+    const overlay = document.getElementById("scanPopupOverlay");
+    overlay.classList.remove("hidden");
+
+    document.getElementById("shieldSpinnerStage").classList.remove("hidden");
+    document.getElementById("verdictRevealStage").classList.add("hidden");
+    document.getElementById("verdictDetailsPanel").classList.add("hidden");
+    document.getElementById("scanningModuleLabel").innerText = `ANALYZING ${moduleName} PAYLOAD...`;
+}
+
+function typeGreenText(element, fullText) {
+    element.innerText = "";
+    let idx = 0;
+    typingTimer = setInterval(() => {
+        if (idx < fullText.length) {
+            element.innerText += fullText.charAt(idx++);
+        } else {
+            clearInterval(typingTimer);
+        }
+    }, 22);
 }
 
 function showResult(res) {
     if (res.status === "error") {
-        document.getElementById("scanStatus").innerText = "SCAN ERROR";
-        document.getElementById("aiResultContainer").innerHTML = "<p style='color:#ff1e56;'>❌ " + res.message + "</p>";
+        closePopup();
+        alert("❌ " + res.message);
         return;
     }
+
     const d = res.data;
     const score = d.risk_score || 0;
-    document.getElementById("riskScoreText").innerText = score + "%";
-    document.getElementById("riskLevelBadge").innerText = d.risk_level || "DONE";
-    document.getElementById("threatCategoryText").innerText = d.threat_category || "Analyzed";
-    document.getElementById("scanStatus").innerText = "SCAN COMPLETE";
+    const isRisky = score >= 40;
 
-    const color = score >= 70 ? "#ff1e56" : (score >= 35 ? "#fbbf24" : "#00ff66");
-    document.getElementById("riskScoreText").style.color = color;
-    document.getElementById("riskLevelBadge").style.color = color;
-    document.getElementById("ring1").style.borderColor = color;
+    document.getElementById("shieldSpinnerStage").classList.add("hidden");
+    document.getElementById("verdictRevealStage").classList.remove("hidden");
 
-    const risky = (d.why_risky || []).map(i => "<li style='margin-bottom:5px;'>• " + i + "</li>").join("");
-    const safe = (d.how_to_stay_safe || []).map(i => "<li style='margin-bottom:5px;'>✓ " + i + "</li>").join("");
-    const qrInfo = res.decoded_qr ? "<p style='color:#00ff66;font-family:monospace;margin-bottom:12px;'><b>Decoded QR:</b> " + res.decoded_qr + "</p>" : "";
+    const heroBox = document.getElementById("verdictHeroBox");
+    const statusText = document.getElementById("verdictStatusText");
+    const percentText = document.getElementById("verdictPercentText");
 
-    document.getElementById("aiResultContainer").innerHTML = qrInfo +
-        "<div class='verdict-grid'>" +
-        "<div class='box-risky'><h4 style='color:#ff1e56;font-family:Orbitron,sans-serif;font-size:0.82rem;margin-bottom:8px;'>🧐 WHY IT IS RISKY:</h4><ul style='list-style:none;font-size:0.88rem;color:#fecdd3;'>" + risky + "</ul></div>" +
-        "<div class='box-safe'><h4 style='color:#00ff66;font-family:Orbitron,sans-serif;font-size:0.82rem;margin-bottom:8px;'>🛡️ HOW TO STAY SAFE:</h4><ul style='list-style:none;font-size:0.88rem;color:#a7f3d0;'>" + safe + "</ul></div>" +
-        "</div><p style='font-family:monospace;font-size:0.8rem;color:#fda4af;'><b>FORENSICS:</b> " + (d.technical_indicators || "") + "</p>";
+    heroBox.className = "verdict-hero blink-2s " + (isRisky ? "shape-risky" : "shape-safe");
+    statusText.innerText = isRisky ? "RISKY" : "SAFE";
+    percentText.innerText = `${score}% ${isRisky ? "RISK" : "SAFE"}`;
+
+    const actionsList = (d.how_to_stay_safe || []).join(" ");
+    const reasonsList = (d.why_risky || []).slice(0, 2).join(" ");
+
+    const alertPill = document.getElementById("alertTagBadge");
+    const shortReasonEl = document.getElementById("shortReasonText");
+    const qrBanner = document.getElementById("decodedQrBanner");
+
+    if (res.decoded_qr) {
+        qrBanner.classList.remove("hidden");
+        qrBanner.innerText = "Decoded QR Payload: " + res.decoded_qr;
+    } else {
+        qrBanner.classList.add("hidden");
+    }
+
+    if (isRisky) {
+        alertPill.innerText = "ALERT";
+        alertPill.className = "alert-pill pill-danger";
+        shortReasonEl.innerText = reasonsList || "High probability of phishing, financial loss, or malware infection.";
+    } else {
+        alertPill.innerText = "VERIFIED";
+        alertPill.className = "alert-pill pill-safe";
+        shortReasonEl.innerText = reasonsList || "No malicious signatures or phishing threats detected in this target.";
+    }
+
+    setTimeout(() => {
+        heroBox.classList.remove("blink-2s");
+        heroBox.classList.add("docked-top");
+        document.getElementById("verdictDetailsPanel").classList.remove("hidden");
+        typeGreenText(document.getElementById("liveActionText"), actionsList || "Proceed safely, but always keep security awareness active.");
+    }, 2000);
 }
 
 async function sendReq(endpoint, formData, name) {
@@ -112,16 +172,16 @@ async function sendReq(endpoint, formData, name) {
     try {
         const r = await fetch("/api/scan" + endpoint, { method: "POST", body: formData });
         if (!r.ok) {
-            const errText = await r.text();
-            alert("Server Error (" + r.status + "): " + errText);
+            closePopup();
+            alert("Server Error (" + r.status + ")");
             return;
         }
         showResult(await r.json());
     } catch (e) {
+        closePopup();
         alert("Connection Error: " + e.message);
     }
 }
-
 
 function scanURL() { const v = document.getElementById("urlInput").value.trim(); if (!v) return alert("Enter a URL!"); const fd = new FormData(); fd.append("url", v); sendReq("/url", fd, "URL"); }
 function scanQR() { const f = document.getElementById("qrInput").files; if (!f) return alert("Upload a QR image!"); const fd = new FormData(); fd.append("file", f); sendReq("/qr", fd, "QR"); }
