@@ -38,7 +38,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
             contents.append(img)
             
         response = client.models.generate_content(
-            model='gemini-3.8-flash',
+            model='gemini-flash-latest',
             contents=contents,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -50,7 +50,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
             "risk_score": 50,
             "risk_level": "CAUTION",
             "threat_category": "System Alert",
-            "why_risky": [f"AI Engine Note: {str(e)}"],
+            "why_risky": [f"AI Engine Error: {str(e)}"],
             "how_to_stay_safe": ["Verify your GEMINI_API_KEY in Render Environment settings."],
             "technical_indicators": "Fallback safety handler active."
         }
