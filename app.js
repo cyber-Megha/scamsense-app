@@ -1,4 +1,3 @@
-javascript
 // 1. 5-Second Hollywood Hacker Decryption Intro Controller
 const statusMessages = [
     "BYPASSING PROXY PROTOCOLS...",
@@ -87,18 +86,24 @@ document.querySelectorAll(".float-card").forEach(card => {
 let typingTimer = null;
 
 function closePopup() {
-    document.getElementById("scanPopupOverlay").classList.add("hidden");
+    const overlay = document.getElementById("scanPopupOverlay");
+    if (overlay) overlay.classList.add("hidden");
     if (typingTimer) clearInterval(typingTimer);
 }
 
 function setScanning(moduleName) {
     if (typingTimer) clearInterval(typingTimer);
     const overlay = document.getElementById("scanPopupOverlay");
-    overlay.classList.remove("hidden");
+    if (overlay) overlay.classList.remove("hidden");
 
-    document.getElementById("shieldSpinnerStage").classList.remove("hidden");
-    document.getElementById("verdictRevealStage").classList.add("hidden");
-    document.getElementById("verdictDetailsPanel").classList.add("hidden");
+    const spinnerStage = document.getElementById("shieldSpinnerStage");
+    if (spinnerStage) spinnerStage.classList.remove("hidden");
+
+    const revealStage = document.getElementById("verdictRevealStage");
+    if (revealStage) revealStage.classList.add("hidden");
+
+    const detailsPanel = document.getElementById("verdictDetailsPanel");
+    if (detailsPanel) detailsPanel.classList.add("hidden");
 
     const shackle = document.getElementById("lockShacklePath");
     if (shackle) shackle.classList.remove("unlocked");
@@ -107,12 +112,14 @@ function setScanning(moduleName) {
     if (unlockBanner) unlockBanner.classList.add("hidden");
 
     const scanLabel = document.getElementById("scanningModuleLabel");
-    scanLabel.classList.remove("hidden");
-    scanLabel.innerText = `SCANNING ${moduleName} PAYLOAD...`;
+    if (scanLabel) {
+        scanLabel.classList.remove("hidden");
+        scanLabel.innerText = `SCANNING ${moduleName} PAYLOAD...`;
+    }
 }
 
-// CLEAN WORD-BY-WORD TYPING SO SPACES ARE 100% PRESERVED AND TEXT NEVER OVERFLOWS
 function typeGreenText(element, fullText) {
+    if (!element) return;
     element.textContent = "";
     const words = fullText.replace(/\s+/g, " ").trim().split(" ");
     let idx = 0;
@@ -133,7 +140,7 @@ function showResult(res) {
         return;
     }
 
-    const d = res.data;
+    const d = res.data || {};
     const score = d.risk_score || 0;
     const isRisky = score >= 40;
 
@@ -141,26 +148,32 @@ function showResult(res) {
     const shackle = document.getElementById("lockShacklePath");
     if (shackle) shackle.classList.add("unlocked");
 
-    document.getElementById("scanningModuleLabel").classList.add("hidden");
+    const scanLabel = document.getElementById("scanningModuleLabel");
+    if (scanLabel) scanLabel.classList.add("hidden");
 
     const unlockBanner = document.getElementById("unlockBigBanner");
-    unlockBanner.classList.remove("hidden");
-    unlockBanner.innerText = isRisky ? "⚠️ RISKY" : "✅ SAFE";
-    unlockBanner.style.color = isRisky ? "#ff1e56" : "#00f3ff";
-    unlockBanner.style.textShadow = isRisky ? "0 0 25px #ff1e56" : "0 0 25px #00f3ff";
+    if (unlockBanner) {
+        unlockBanner.classList.remove("hidden");
+        unlockBanner.innerText = isRisky ? "⚠️ RISKY" : "✅ SAFE";
+        unlockBanner.style.color = isRisky ? "#ff1e56" : "#00f3ff";
+        unlockBanner.style.textShadow = isRisky ? "0 0 25px #ff1e56" : "0 0 25px #00f3ff";
+    }
 
     // Step B: Transition to blinking verdict shape
     setTimeout(() => {
-        document.getElementById("shieldSpinnerStage").classList.add("hidden");
-        document.getElementById("verdictRevealStage").classList.remove("hidden");
+        const spinnerStage = document.getElementById("shieldSpinnerStage");
+        if (spinnerStage) spinnerStage.classList.add("hidden");
+
+        const revealStage = document.getElementById("verdictRevealStage");
+        if (revealStage) revealStage.classList.remove("hidden");
 
         const heroBox = document.getElementById("verdictHeroBox");
         const statusText = document.getElementById("verdictStatusText");
         const percentText = document.getElementById("verdictPercentText");
 
-        heroBox.className = "verdict-hero blink-2s " + (isRisky ? "shape-risky" : "shape-safe");
-        statusText.innerText = isRisky ? "RISKY" : "SAFE";
-        percentText.innerText = `${score}% ${isRisky ? "RISK" : "SAFE"}`;
+        if (heroBox) heroBox.className = "verdict-hero blink-2s " + (isRisky ? "shape-risky" : "shape-safe");
+        if (statusText) statusText.innerText = isRisky ? "RISKY" : "SAFE";
+        if (percentText) percentText.innerText = `${score}% ${isRisky ? "RISK" : "SAFE"}`;
 
         const actionsList = (d.how_to_stay_safe || []).join(" ");
         const reasonsList = (d.why_risky || []).slice(0, 2).join(" ");
@@ -169,28 +182,35 @@ function showResult(res) {
         const shortReasonEl = document.getElementById("shortReasonText");
         const qrBanner = document.getElementById("decodedQrBanner");
 
-        if (res.decoded_qr) {
-            qrBanner.classList.remove("hidden");
-            qrBanner.innerText = "Decoded QR Payload: " + res.decoded_qr;
-        } else {
-            qrBanner.classList.add("hidden");
+        if (qrBanner) {
+            if (res.decoded_qr) {
+                qrBanner.classList.remove("hidden");
+                qrBanner.innerText = "Decoded QR Payload: " + res.decoded_qr;
+            } else {
+                qrBanner.classList.add("hidden");
+            }
         }
 
-        if (isRisky) {
-            alertPill.innerText = "ALERT";
-            alertPill.className = "alert-pill pill-danger";
-            shortReasonEl.innerText = reasonsList || "High probability of phishing, financial loss, or malware infection.";
-        } else {
-            alertPill.innerText = "VERIFIED";
-            alertPill.className = "alert-pill pill-safe";
-            shortReasonEl.innerText = reasonsList || "No malicious signatures or phishing threats detected in this target.";
+        if (alertPill && shortReasonEl) {
+            if (isRisky) {
+                alertPill.innerText = "ALERT";
+                alertPill.className = "alert-pill pill-danger";
+                shortReasonEl.innerText = reasonsList || "High probability of phishing, financial loss, or malware infection.";
+            } else {
+                alertPill.innerText = "VERIFIED";
+                alertPill.className = "alert-pill pill-safe";
+                shortReasonEl.innerText = reasonsList || "No malicious signatures or phishing threats detected in this target.";
+            }
         }
 
         // Step C: After 2 seconds blink, dock verdict to top & type clean spaced green advice
         setTimeout(() => {
-            heroBox.classList.remove("blink-2s");
-            heroBox.classList.add("docked-top");
-            document.getElementById("verdictDetailsPanel").classList.remove("hidden");
+            if (heroBox) {
+                heroBox.classList.remove("blink-2s");
+                heroBox.classList.add("docked-top");
+            }
+            const detailsPanel = document.getElementById("verdictDetailsPanel");
+            if (detailsPanel) detailsPanel.classList.remove("hidden");
             typeGreenText(document.getElementById("liveActionText"), actionsList || "Proceed safely, but always keep security awareness active.");
         }, 2000);
     }, 1100);
@@ -213,8 +233,8 @@ async function sendReq(endpoint, formData, name) {
 }
 
 function scanURL() { const v = document.getElementById("urlInput").value.trim(); if (!v) return alert("Enter a URL!"); const fd = new FormData(); fd.append("url", v); sendReq("/url", fd, "URL"); }
-function scanQR() { const f = document.getElementById("qrInput").files; if (!f) return alert("Upload a QR image!"); const fd = new FormData(); fd.append("file", f); sendReq("/qr", fd, "QR"); }
+function scanQR() { const f = document.getElementById("qrInput").files[0]; if (!f) return alert("Upload a QR image!"); const fd = new FormData(); fd.append("file", f); sendReq("/qr", fd, "QR"); }
 function scanEmail() { const s = document.getElementById("emailSender").value.trim(); const b = document.getElementById("emailBody").value.trim(); if (!b) return alert("Paste email content!"); const fd = new FormData(); fd.append("sender", s); fd.append("body", b); sendReq("/email", fd, "EMAIL"); }
 function scanMessage() { const m = document.getElementById("msgInput").value.trim(); if (!m) return alert("Paste message!"); const fd = new FormData(); fd.append("message", m); sendReq("/message", fd, "MESSAGE"); }
-function scanDocument() { const f = document.getElementById("docInput").files; if (!f) return alert("Upload PDF/TXT!"); const fd = new FormData(); fd.append("file", f); sendReq("/document", fd, "DOCUMENT"); }
-function scanImage() { const f = document.getElementById("imgInput").files; if (!f) return alert("Upload an image!"); const fd = new FormData(); fd.append("file", f); sendReq("/image", fd, "IMAGE"); }
+function scanDocument() { const f = document.getElementById("docInput").files[0]; if (!f) return alert("Upload PDF/TXT!"); const fd = new FormData(); fd.append("file", f); sendReq("/document", fd, "DOCUMENT"); }
+function scanImage() { const f = document.getElementById("imgInput").files[0]; if (!f) return alert("Upload an image!"); const fd = new FormData(); fd.append("file", f); sendReq("/image", fd, "IMAGE"); }
