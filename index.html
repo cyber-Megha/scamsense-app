@@ -105,24 +105,30 @@
         </div>
     </main>
 
-    <!-- DYNAMIC POPUP SHIELD & CINEMATIC VERDICT MODAL -->
+    <!-- DYNAMIC POPUP LOCK-SHIELD & CINEMATIC VERDICT MODAL -->
     <div id="scanPopupOverlay" class="popup-overlay hidden">
         <div class="popup-container">
             <button class="close-popup-btn" onclick="closePopup()">✕ CLOSE</button>
 
-            <!-- STAGE 1: SPINNING SHIELD WHILE ANALYZING -->
+            <!-- STAGE 1: SPINNING CYAN RINGS + SHIELD WITH LOCK (UNLOCKS ON VERDICT) -->
             <div id="shieldSpinnerStage" class="shield-stage">
                 <div class="holo-shield-wrap">
                     <div class="shield-ring-outer"></div>
                     <div class="shield-ring-inner"></div>
                     <div class="shield-core-icon">
-                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#00ff66" stroke-width="2">
-                            <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z" fill="rgba(0,255,102,0.15)"/>
-                            <path d="M9 12l2 2 4-4" stroke="#00f3ff" stroke-width="2.5" stroke-linecap="round"/>
+                        <svg width="92" height="92" viewBox="0 0 64 64" fill="none">
+                            <path d="M32 4L10 14V30C10 45.2 19.4 58.6 32 62C44.6 58.6 54 45.2 54 30V14L32 4Z" 
+                                  fill="rgba(0, 243, 255, 0.14)" stroke="#00f3ff" stroke-width="2.5"/>
+                            <path id="lockShacklePath" class="lock-shackle" d="M25 27V21C25 17.1 28.1 14 32 14C35.9 14 39 17.1 39 21V27" 
+                                  stroke="#00f3ff" stroke-width="3" stroke-linecap="round"/>
+                            <rect x="21" y="27" width="22" height="17" rx="3" fill="rgba(0, 243, 255, 0.25)" stroke="#00f3ff" stroke-width="2.5"/>
+                            <circle cx="32" cy="34" r="2.2" fill="#fff"/>
+                            <path d="M32 36V39.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
                         </svg>
                     </div>
                 </div>
-                <p id="scanningModuleLabel" class="scanning-pulse-text">ANALYZING PAYLOAD...</p>
+                <p id="scanningModuleLabel" class="scanning-pulse-text">DECRYPTING PAYLOAD...</p>
+                <div id="unlockBigBanner" class="unlock-float-text hidden">RISKY</div>
             </div>
 
             <!-- STAGE 2: VERDICT BADGE (BLINKS 2s THEN MOVES UP) + DETAILS -->
