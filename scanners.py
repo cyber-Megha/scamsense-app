@@ -22,7 +22,7 @@ def extract_text_from_document(file_bytes: bytes, filename: str) -> str:
 def decode_qr_from_image(file_bytes: bytes) -> str:
     # Gemini Vision ব্যবহার করে ১০০% নির্ভুলভাবে QR কোডের ভেতরের টেক্সট/লিংক ডিকোড করা (কোনো DLL এরর ছাড়াই)
     img = Image.open(io.BytesIO(file_bytes))
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-3.0-flash')
     response = model.generate_content([
         "Extract ONLY the exact URL or text encoded inside this QR code. If there is no QR code, reply strictly with NONE.", 
         img
