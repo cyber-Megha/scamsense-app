@@ -1,0 +1,16 @@
+{
+  "name": "ScamSense Cyber Defense",
+  "short_name": "ScamSense",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050205",
+  "theme_color": "#ff1e56",
+  "icons": [
+    {
+      "src": "https://flaticon.com",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
+

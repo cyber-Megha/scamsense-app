@@ -1,0 +1,133 @@
+html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScamSense | Cyber Defense SOC</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <canvas id="bg-canvas"></canvas>
+
+    <!-- 5-SECOND HOLLYWOOD HACKER DECRYPTION & IMPACT INTRO -->
+    <div id="splash-screen">
+        <div class="scanner-beam"></div>
+        <div class="hacker-emblem-intro">
+            <svg width="85" height="85" viewBox="0 0 24 24" fill="none" stroke="#ff1e56" stroke-width="1.8">
+                <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z" fill="rgba(255,30,86,0.18)"/>
+                <path d="M8 11h8M9 15h6M12 7v2" stroke="#00ff66" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+        </div>
+        <div class="glitch-wrapper">
+            <span class="word-scam">SCAM</span><span class="word-sense">SENSE</span>
+        </div>
+        <div class="cyber-divider"></div>
+        <div id="decryptStatus" class="decrypt-text">DECRYPTING NEURAL FIREWALL...</div>
+    </div>
+
+    <!-- PERMANENT HEADER WITH CUSTOM HACKER SHIELD LOGO -->
+    <header>
+        <div class="header-inner">
+            <div class="brand">
+                <div class="hacker-logo-box">
+                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#ff1e56" stroke-width="2">
+                        <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z"/>
+                        <circle cx="12" cy="11" r="2.5" stroke="#00ff66"/>
+                        <path d="M8.5 16c1-1.5 6-1.5 7 0" stroke="#00ff66" stroke-linecap="round"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1>SCAM<span>SENSE</span></h1>
+                    <p>OFFENSIVE & DEFENSIVE CYBER THREAT ENGINE</p>
+                </div>
+            </div>
+            <div class="hud-badge">● FIREWALL ARMED // ACTIVE</div>
+        </div>
+    </header>
+
+    <main>
+        <div class="cards-grid">
+            <div class="float-card">
+                <div class="card-3d-content">
+                    <div class="card-head"><h2>01 // URL SCANNER</h2><span>🌐</span></div>
+                    <p class="card-desc">Trace phishing domains & malicious redirects.</p>
+                    <input type="text" id="urlInput" class="cyber-input" placeholder="https://suspicious-target.com">
+                </div>
+                <button class="cyber-btn card-3d-content" onclick="scanURL()">SCAN TARGET URL</button>
+            </div>
+
+            <div class="float-card">
+                <div class="card-3d-content">
+                    <div class="card-head"><h2>02 // QR ANALYZER</h2><span>📷</span></div>
+                    <p class="card-desc">Extract & neutralize hidden QR payment traps.</p>
+                    <input type="file" id="qrInput" class="cyber-input" accept="image/*">
+                </div>
+                <button class="cyber-btn card-3d-content" onclick="scanQR()">DECODE QR PAYLOAD</button>
+            </div>
+
+            <div class="float-card">
+                <div class="card-3d-content">
+                    <div class="card-head"><h2>03 // EMAIL INSPECTOR</h2><span>📧</span></div>
+                    <input type="text" id="emailSender" class="cyber-input" placeholder="Spoofed Sender (Optional)">
+                    <textarea id="emailBody" rows="2" class="cyber-input" placeholder="Paste suspicious email body..."></textarea>
+                </div>
+                <button class="cyber-btn card-3d-content" onclick="scanEmail()">INSPECT EMAIL</button>
+            </div>
+
+            <div class="float-card">
+                <div class="card-3d-content">
+                    <div class="card-head"><h2>04 // MESSAGE DETECTOR</h2><span>💬</span></div>
+                    <p class="card-desc">Detect SMS, WhatsApp & Telegram scam traps.</p>
+                    <textarea id="msgInput" rows="2" class="cyber-input" placeholder="Paste suspicious message text..."></textarea>
+                </div>
+                <button class="cyber-btn card-3d-content" onclick="scanMessage()">ANALYZE MESSAGE</button>
+            </div>
+
+            <div class="float-card">
+                <div class="card-3d-content">
+                    <div class="card-head"><h2>05 // DOC FORENSICS</h2><span>📄</span></div>
+                    <p class="card-desc">Scan PDF/TXT invoices & fake legal notices.</p>
+                    <input type="file" id="docInput" class="cyber-input" accept=".pdf,.txt">
+                </div>
+                <button class="cyber-btn card-3d-content" onclick="scanDocument()">SCAN DOCUMENT</button>
+            </div>
+
+            <div class="float-card">
+                <div class="card-3d-content">
+                    <div class="card-head"><h2>06 // SCREENSHOT VISION</h2><span>🖼️</span></div>
+                    <p class="card-desc">AI computer vision for fake UPI & login pages.</p>
+                    <input type="file" id="imgInput" class="cyber-input" accept="image/*">
+                </div>
+                <button class="cyber-btn card-3d-content" onclick="scanImage()">SCAN SCREENSHOT</button>
+            </div>
+        </div>
+
+        <div id="resultSection" class="result-card">
+            <div class="result-header">
+                <h3>⚡ 3D THREAT RADAR & AI FORENSIC VERDICT</h3>
+                <span id="scanStatus" class="hud-badge">RADAR STANDBY</span>
+            </div>
+            <div class="result-body">
+                <div class="gauge-wrap">
+                    <div class="radar-sweep"></div>
+                    <div id="ring1" class="ring-1"></div>
+                    <div id="ring2" class="ring-2"></div>
+                    <div class="gauge-center">
+                        <span id="riskLevelBadge">SAFE / IDLE</span>
+                        <span id="riskScoreText">0%</span>
+                        <span id="threatCategoryText">No Active Threat</span>
+                    </div>
+                </div>
+                <div class="ai-terminal" id="aiResultContainer">
+                    <p style="color: #00ff66; font-family: 'Fira Code', monospace; font-size: 0.85rem;">> [ROOT@SCAMSENSE] Select any of the 6 floating defense modules above.</p>
+                    <p style="color: #fda4af; font-family: 'Fira Code', monospace; font-size: 0.82rem; margin-top: 10px;">> Deep Threat Level, AI Explanation, and Countermeasures will render here.</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

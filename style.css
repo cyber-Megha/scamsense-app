@@ -1,0 +1,234 @@
+@import url('https://googleapis.com');
+
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    background-color: #050205;
+    color: #f8fafc;
+    font-family: 'Rajdhani', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+    padding-bottom: 70px;
+    /* Deep Red + Matrix Green Cyber Atmosphere */
+    background-image: 
+        radial-gradient(circle at 18% 20%, rgba(220, 38, 38, 0.28), transparent 45%),
+        radial-gradient(circle at 82% 75%, rgba(16, 185, 129, 0.24), transparent 48%),
+        radial-gradient(circle at 50% 50%, rgba(153, 27, 27, 0.15), transparent 65%);
+}
+
+#bg-canvas { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+
+/* HATKE 5-SEC HOLLYWOOD HACKER DECRYPTION & GLITCH INTRO */
+#splash-screen {
+    position: fixed; inset: 0; z-index: 9999;
+    background: radial-gradient(circle at center, #1a050a 0%, #020103 100%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    overflow: hidden; transition: opacity 0.8s ease;
+}
+.scanner-beam {
+    position: absolute; top: 0; left: 0; width: 100%; height: 4px;
+    background: linear-gradient(90deg, transparent, #ff003c, #00ff66, transparent);
+    box-shadow: 0 0 25px #ff003c, 0 0 40px #00ff66;
+    animation: scanVertical 2.2s ease-in-out infinite alternate;
+}
+@keyframes scanVertical { 0% { top: 5%; } 100% { top: 95%; } }
+
+.hacker-emblem-intro {
+    font-size: 4.5rem; margin-bottom: 12px;
+    filter: drop-shadow(0 0 25px #ff003c) drop-shadow(0 0 45px #00ff66);
+    animation: pulseEmblem 1.2s infinite alternate;
+}
+@keyframes pulseEmblem { 0% { transform: scale(0.92); } 100% { transform: scale(1.08); } }
+
+.glitch-wrapper {
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+    animation: impactShake 0.45s ease-in-out 1.4s;
+}
+@keyframes impactShake {
+    0%, 100% { transform: translate(0, 0); }
+    20% { transform: translate(-12px, 6px) scale(1.06); }
+    40% { transform: translate(12px, -6px) scale(1.06); }
+    60% { transform: translate(-6px, 4px); }
+    80% { transform: translate(6px, -4px); }
+}
+.word-scam {
+    font-family: 'Black Ops One', 'Orbitron', sans-serif;
+    font-size: 5rem; letter-spacing: 6px;
+    background: linear-gradient(180deg, #ffffff 15%, #ff1e56 85%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 0 28px rgba(255, 30, 86, 0.95));
+    opacity: 0;
+    animation: flyLeft 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.25s forwards;
+}
+.word-sense {
+    font-family: 'Black Ops One', 'Orbitron', sans-serif;
+    font-size: 5rem; letter-spacing: 6px;
+    background: linear-gradient(180deg, #ffffff 15%, #00ff66 85%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 0 28px rgba(0, 255, 102, 0.95));
+    opacity: 0;
+    animation: flyRight 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.25s forwards;
+}
+@keyframes flyLeft {
+    0% { transform: translateX(-110vw) skewX(-35deg); opacity: 0; }
+    100% { transform: translateX(0) skewX(-5deg); opacity: 1; }
+}
+@keyframes flyRight {
+    0% { transform: translateX(110vw) skewX(35deg); opacity: 0; }
+    100% { transform: translateX(0) skewX(-5deg); opacity: 1; }
+}
+.cyber-divider {
+    height: 3px; width: 0%; max-width: 580px; margin: 16px auto;
+    background: linear-gradient(90deg, #ff003c, #ffffff, #00ff66);
+    box-shadow: 0 0 20px #ff003c, 0 0 20px #00ff66;
+    animation: lineExpand 0.9s ease-out 1.45s forwards;
+}
+@keyframes lineExpand { 100% { width: 90%; } }
+.decrypt-text {
+    font-family: 'Fira Code', monospace; font-size: 0.95rem; font-weight: 700;
+    color: #00ff66; letter-spacing: 4px; text-shadow: 0 0 12px #00ff66;
+}
+@media (max-width: 640px) {
+    .word-scam, .word-sense { font-size: 2.5rem; letter-spacing: 3px; }
+    .decrypt-text { font-size: 0.72rem; letter-spacing: 2px; }
+}
+
+/* DEEP CRIMSON & EMERALD HEADER WITH HACKER LOGO */
+header {
+    position: sticky; top: 0; z-index: 100;
+    background: linear-gradient(90deg, rgba(20, 4, 10, 0.92), rgba(4, 18, 12, 0.92));
+    backdrop-filter: blur(18px);
+    border-bottom: 1.5px solid rgba(255, 30, 86, 0.6);
+    box-shadow: 0 8px 35px rgba(0, 0, 0, 0.95), 0 0 25px rgba(255, 30, 86, 0.25);
+    padding: 14px 28px;
+}
+.header-inner { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+.brand { display: flex; align-items: center; gap: 14px; }
+.hacker-logo-box {
+    width: 48px; height: 48px; border-radius: 12px;
+    background: linear-gradient(135deg, #2b0610, #052618);
+    border: 1.5px solid #ff1e56;
+    box-shadow: 0 0 18px rgba(255, 30, 86, 0.5), inset 0 0 12px rgba(0, 255, 102, 0.3);
+    display: flex; align-items: center; justify-content: center;
+}
+.brand h1 {
+    font-family: 'Black Ops One', 'Orbitron', sans-serif; font-size: 2.1rem;
+    letter-spacing: 3px; color: #fff; text-shadow: 0 0 15px rgba(255, 30, 86, 0.8);
+}
+.brand h1 span { color: #00ff66; text-shadow: 0 0 15px rgba(0, 255, 102, 0.8); }
+.brand p { font-family: 'Fira Code', monospace; font-size: 0.72rem; color: #fda4af; letter-spacing: 2.5px; font-weight: 700; }
+
+.hud-badge {
+    font-family: 'Fira Code', monospace; font-size: 0.78rem; font-weight: 700;
+    padding: 8px 16px; border-radius: 8px; color: #00ff66;
+    background: rgba(0, 255, 102, 0.12); border: 1px solid rgba(0, 255, 102, 0.65);
+    box-shadow: 0 0 18px rgba(0, 255, 102, 0.3);
+}
+
+main { max-width: 1200px; margin: 42px auto 0; padding: 0 22px; perspective: 1200px; }
+
+/* DEEP OBSIDIAN-CRIMSON FLOATING 3D CARDS WITH SUBTLE NEON EDGE */
+.cards-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 32px; margin-bottom: 50px;
+}
+.float-card {
+    position: relative;
+    background: linear-gradient(155deg, rgba(28, 7, 15, 0.92) 0%, rgba(7, 10, 18, 0.96) 55%, rgba(5, 26, 18, 0.92) 100%);
+    backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 30, 86, 0.45);
+    border-radius: 16px; padding: 24px;
+    box-shadow: 0 28px 55px -12px #000000, 0 0 25px rgba(220, 38, 38, 0.22);
+    transform-style: preserve-3d;
+    transition: transform 0.15s ease-out, box-shadow 0.3s ease, border-color 0.3s ease;
+    display: flex; flex-direction: column; justify-content: space-between;
+}
+/* Subtle Neon Corner Touch Only */
+.float-card::before, .float-card::after {
+    content: ""; position: absolute; width: 16px; height: 16px; pointer-events: none;
+}
+.float-card::before { top: -1px; left: -1px; border-top: 2.5px solid #ff1e56; border-left: 2.5px solid #ff1e56; border-top-left-radius: 14px; }
+.float-card::after { bottom: -1px; right: -1px; border-bottom: 2.5px solid #00ff66; border-right: 2.5px solid #00ff66; border-bottom-right-radius: 14px; }
+
+.float-card:hover {
+    border-color: #00ff66;
+    box-shadow: 0 38px 70px -10px #000, 0 0 35px rgba(255, 30, 86, 0.45), 0 0 20px rgba(0, 255, 102, 0.35);
+}
+.card-3d-content { transform: translateZ(26px); }
+.card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.card-head h2 {
+    font-family: 'Orbitron', sans-serif; font-size: 1rem; font-weight: 900;
+    color: #fff; letter-spacing: 1.5px; text-shadow: 0 0 10px rgba(255, 30, 86, 0.8);
+}
+.card-desc { font-size: 0.92rem; color: #cbd5e1; margin-bottom: 14px; font-weight: 600; }
+
+.cyber-input {
+    width: 100%; background: rgba(4, 2, 6, 0.92); border: 1px solid rgba(255, 30, 86, 0.45);
+    color: #00ff66; font-family: 'Fira Code', monospace; padding: 11px 13px; border-radius: 8px;
+    font-size: 0.82rem; margin-bottom: 14px; transition: 0.25s;
+}
+.cyber-input::placeholder { color: #64748b; }
+.cyber-input:focus { outline: none; border-color: #00ff66; box-shadow: 0 0 16px rgba(0, 255, 102, 0.45); }
+
+.cyber-btn {
+    width: 100%; background: linear-gradient(90deg, #e11d48 0%, #991b1b 45%, #059669 100%);
+    background-size: 200% auto; border: 1px solid rgba(255, 255, 255, 0.25); color: #fff;
+    font-family: 'Orbitron', sans-serif; padding: 13px; border-radius: 8px; font-weight: 900;
+    font-size: 0.82rem; letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
+    box-shadow: 0 6px 22px rgba(225, 29, 72, 0.45); transition: 0.35s;
+}
+.cyber-btn:hover { background-position: right center; box-shadow: 0 0 30px rgba(0, 255, 102, 0.75); transform: translateY(-2px); }
+
+/* HOLOGRAPHIC 3D THREAT CORE & VERDICT CARD (MATCHING REFERENCE IMAGE) */
+.result-card {
+    background: linear-gradient(155deg, rgba(22, 6, 14, 0.94), rgba(5, 18, 14, 0.96));
+    backdrop-filter: blur(22px); border: 1px solid rgba(255, 30, 86, 0.55);
+    border-radius: 20px; padding: 30px;
+    box-shadow: 0 35px 75px -10px #000, 0 0 40px rgba(225, 29, 72, 0.28);
+}
+.result-header {
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid rgba(255, 30, 86, 0.35); padding-bottom: 16px; margin-bottom: 26px; flex-wrap: wrap; gap: 10px;
+}
+.result-header h3 { font-family: 'Orbitron', sans-serif; font-size: 1.2rem; letter-spacing: 2.5px; color: #fff; text-shadow: 0 0 14px #ff1e56; }
+
+.result-body { display: grid; grid-template-columns: 250px 1fr; gap: 32px; align-items: center; }
+@media (max-width: 820px) { .result-body { grid-template-columns: 1fr; } }
+
+/* 3D RADAR & MULTI-RING HOLOGRAM */
+.gauge-wrap { position: relative; width: 220px; height: 220px; margin: 0 auto; display: flex; align-items: center; justify-content: center; }
+.radar-sweep {
+    position: absolute; inset: 8px; border-radius: 50%;
+    background: conic-gradient(from 0deg, rgba(255, 30, 86, 0.45), rgba(0, 255, 102, 0.15), transparent 60%);
+    animation: spinCW 3s linear infinite;
+}
+.ring-1 {
+    position: absolute; inset: 0; border-radius: 50%; border: 3px dashed #ff1e56;
+box-shadow: 0 0 30px rgba(255, 30, 86, 0.6), inset 0 0 20px rgba(255, 30, 86, 0.4);
+animation: spinCW 10s linear infinite;
+}
+.ring-2 {
+position: absolute; inset: 15px; border-radius: 50%; border: 3px dotted #00ff66;
+box-shadow: 0 0 25px rgba(0, 255, 102, 0.5);
+animation: spinCCW 6s linear infinite;
+}
+@keyframes spinCW { 100% { transform: rotate(360deg); } }
+@keyframes spinCCW { 100% { transform: rotate(-360deg); } }
+.gauge-center {
+position: relative; z-index: 3; width: 140px; height: 140px; border-radius: 50%;
+background: radial-gradient(circle, #240711 0%, #030104 100%);
+border: 2px solid #ff1e56; display: flex; flex-direction: column;
+align-items: center; justify-content: center; text-align: center;
+box-shadow: 0 0 30px rgba(255, 30, 86, 0.5), inset 0 0 22px rgba(0, 255, 102, 0.3);
+}
+#riskLevelBadge { font-family: 'Orbitron', sans-serif; font-size: 0.72rem; font-weight: 900; letter-spacing: 1.5px; color: #00ff66; }
+#riskScoreText { font-family: 'Orbitron', sans-serif; font-size: 2.5rem; font-weight: 900; color: #fff; text-shadow: 0 0 18px #ff1e56; }
+#threatCategoryText { font-family: 'Fira Code', monospace; font-size: 0.7rem; color: #fda4af; max-width: 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-terminal {
+background: rgba(4, 2, 7, 0.94); border: 1px solid rgba(0, 255, 102, 0.35);
+border-radius: 14px; padding: 22px; min-height: 210px;
+}
+.verdict-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 14px; }
+@media (max-width: 640px) { .verdict-grid { grid-template-columns: 1fr; } }
+.box-risky { background: rgba(225, 29, 72, 0.16); border: 1px solid #ff1e56; padding: 15px; border-radius: 10px; }
+.box-safe { background: rgba(16, 185, 129, 0.14); border: 1px solid #00ff66; padding: 15px; border-radius: 10px; }
