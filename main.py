@@ -61,4 +61,4 @@ async def scan_image(file: UploadFile = File(...)):
     result = analyze_threat(content_type="Screenshot / Fake Receipt Image", image_bytes=file_bytes)
     return {"status": "success", "data": result}
 from fastapi.staticfiles import StaticFiles
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+app.mount("/", StaticFiles(directory=".", html=True), name="frontend")
