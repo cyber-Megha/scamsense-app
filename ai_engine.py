@@ -7,17 +7,8 @@ import io
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-def get_active_model():
-    # সরাসরি Google সার্ভার থেকে সচল থাকা প্রথম Flash মডেলটি অটোমেটিক বেছে নেবে
-    for m in client.models.list():
-        name = m.name.replace("models/", "")
-        if "flash" in name.lower() and "exp" not in name.lower():
-            return name
-    return "gemini-3.8-flash"
-
 def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = None, extra_intel: dict = None):
     try:
-        active_model = get_active_model()
         prompt = f"""
         You are an elite Cybersecurity Threat Analyst for 'ScamSense'. 
         Analyze the following {content_type} for phishing, fraud, malware, or social engineering.
@@ -47,7 +38,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
             contents.append(img)
 
         response = client.models.generate_content(
-            model=active_model,
+            model='gemini-3.8-flash',
             contents=contents,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
