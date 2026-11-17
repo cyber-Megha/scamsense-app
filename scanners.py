@@ -1,10 +1,10 @@
 import PyPDF2
 import io
 from PIL import Image
-import google.generativeai as genai
+from google import genai
 import os
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def extract_text_from_document(file_bytes: bytes, filename: str) -> str:
     if filename.lower().endswith(".pdf"):
@@ -19,15 +19,12 @@ def extract_text_from_document(file_bytes: bytes, filename: str) -> str:
 
 def decode_qr_from_image(file_bytes: bytes) -> str:
     img = Image.open(io.BytesIO(file_bytes))
-    available = [
-        m.name for m in genai.list_models()
-        if 'generateContent' in m.supported_generation_methods and 'flash' in m.name.lower()
-    ]
-    model_name = available[0] if available else 'gemini-flash-latest'
-    model = genai.GenerativeModel(model_name)
-    response = model.generate_content([
-        "Extract ONLY the exact URL or text encoded inside this QR code. If there is no QR code, reply strictly with NONE.", 
-        img
-    ])
+    response = client.models.generate_content(
+        model='gemini-3.8-flash',
+        contents=[
+            "Extract ONLY the exact URL or text encoded inside this QR code. If there is no QR code, reply strictly with NONE.", 
+            img
+        ]
+    )
     decoded = response.text.strip()
     return None if decoded == "NONE" or not decoded else decoded
