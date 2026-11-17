@@ -6,6 +6,13 @@ import os
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
+def get_active_model():
+    for m in client.models.list():
+        name = m.name.replace("models/", "")
+        if "flash" in name.lower() and "exp" not in name.lower():
+            return name
+    return "gemini-3.8-flash"
+
 def extract_text_from_document(file_bytes: bytes, filename: str) -> str:
     if filename.lower().endswith(".pdf"):
         pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
@@ -20,7 +27,7 @@ def extract_text_from_document(file_bytes: bytes, filename: str) -> str:
 def decode_qr_from_image(file_bytes: bytes) -> str:
     img = Image.open(io.BytesIO(file_bytes))
     response = client.models.generate_content(
-        model='gemini-flash-latest',
+        model=get_active_model(),
         contents=[
             "Extract ONLY the exact URL or text encoded inside this QR code. If there is no QR code, reply strictly with NONE.", 
             img
