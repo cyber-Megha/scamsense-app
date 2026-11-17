@@ -20,7 +20,7 @@ def extract_text_from_document(file_bytes: bytes, filename: str) -> str:
 def decode_qr_from_image(file_bytes: bytes) -> str:
     img = Image.open(io.BytesIO(file_bytes))
     response = client.models.generate_content(
-        model='gemini-3.8-flash',
+        model='gemini-flash-latest',
         contents=[
             "Extract ONLY the exact URL or text encoded inside this QR code. If there is no QR code, reply strictly with NONE.", 
             img
