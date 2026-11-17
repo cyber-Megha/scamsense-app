@@ -21,7 +21,6 @@ body {
     filter: blur(0.6px);
 }
 
-/* 5-SEC HOLLYWOOD HACKER DECRYPTION & GLITCH INTRO WITH AUTO-HIDE BACKUP */
 #splash-screen {
     position: fixed; inset: 0; z-index: 9999;
     background-color: #050718;
@@ -113,7 +112,6 @@ body {
     .decrypt-text { font-size: 0.72rem; letter-spacing: 2px; }
 }
 
-/* PERMANENT TOP HEADER */
 header {
     position: sticky; top: 0; z-index: 100;
     background: rgba(6, 9, 28, 0.65);
@@ -148,7 +146,6 @@ header {
 
 main { max-width: 1200px; margin: 40px auto 0; padding: 0 22px; perspective: 1200px; }
 
-/* CRYSTAL-CLEAR TRANSPARENT GLASS CARDS */
 .cards-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 30px;
@@ -201,7 +198,7 @@ main { max-width: 1200px; margin: 40px auto 0; padding: 0 22px; perspective: 120
 }
 .cyber-btn:hover { background-position: right center; box-shadow: 0 0 32px rgba(0, 243, 255, 0.85); transform: translateY(-2px); }
 
-/* DYNAMIC POPUP OVERLAY & CINEMATIC VERDICT STYLES */
+/* POPUP OVERLAY & LOCK-SHIELD ANIMATIONS */
 .popup-overlay {
     position: fixed; inset: 0; z-index: 5000;
     background: rgba(3, 4, 14, 0.85);
@@ -213,16 +210,17 @@ main { max-width: 1200px; margin: 40px auto 0; padding: 0 22px; perspective: 120
 .hidden { display: none !important; }
 
 .popup-container {
-    position: relative; width: 100%; max-width: 620px;
-    background: linear-gradient(155deg, rgba(16, 10, 38, 0.94), rgba(6, 12, 32, 0.96));
+    position: relative; width: 100%; max-width: 600px;
+    background: linear-gradient(155deg, rgba(16, 10, 38, 0.95), rgba(6, 12, 32, 0.97));
     border: 1.5px solid rgba(255, 20, 147, 0.6);
-    border-radius: 22px; padding: 34px 28px;
+    border-radius: 22px; padding: 34px 26px;
     box-shadow: 0 30px 80px #000, 0 0 45px rgba(255, 20, 147, 0.3);
     text-align: center;
-animation: popZoomIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    overflow: hidden;
+    animation: popZoomIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes popZoomIn {
-0% { transform: scale(0.75); opacity: 0; }
+    0% { transform: scale(0.75); opacity: 0; }
 100% { transform: scale(1); opacity: 1; }
 }
 .close-popup-btn {
@@ -232,42 +230,54 @@ color: #cbd5e1; font-family: 'Fira Code', monospace; font-size: 0.75rem;
 padding: 5px 12px; border-radius: 8px; cursor: pointer; transition: 0.2s;
 }
 .close-popup-btn:hover { background: #ff1493; color: #fff; border-color: #ff1493; }
-/* SPINNING SHIELD STAGE */
-.shield-stage { padding: 25px 0; }
+.shield-stage { padding: 20px 0; }
 .holo-shield-wrap {
-position: relative; width: 170px; height: 170px; margin: 0 auto 20px;
+position: relative; width: 185px; height: 185px; margin: 0 auto 18px;
 display: flex; align-items: center; justify-content: center;
 }
 .shield-ring-outer {
 position: absolute; inset: 0; border-radius: 50%;
-border: 3.5px dashed #ff1493; border-top-color: #00f3ff;
-box-shadow: 0 0 30px rgba(0, 243, 255, 0.45);
-animation: spinCW 2.2s linear infinite;
+border: 4px dashed #00f3ff; border-top-color: #ff1493;
+box-shadow: 0 0 35px rgba(0, 243, 255, 0.65), inset 0 0 20px rgba(0, 243, 255, 0.3);
+animation: spinCW 1.4s linear infinite;
 }
 .shield-ring-inner {
 position: absolute; inset: 16px; border-radius: 50%;
-border: 3px dotted #00ff66;
-animation: spinCCW 1.6s linear infinite;
+border: 3px dotted #00f3ff;
+box-shadow: 0 0 20px rgba(0, 243, 255, 0.5);
+animation: spinCCW 1s linear infinite;
 }
 @keyframes spinCW { 100% { transform: rotate(360deg); } }
 @keyframes spinCCW { 100% { transform: rotate(-360deg); } }
-.shield-core-icon {
-animation: pulseEmblem 0.9s infinite alternate;
-filter: drop-shadow(0 0 18px #00ff66);
+.shield-core-icon { filter: drop-shadow(0 0 22px #00f3ff); transition: transform 0.4s ease; }
+.lock-shackle {
+transform-origin: 39px 27px;
+transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.lock-shackle.unlocked {
+transform: translateY(-6px) rotate(28deg);
+stroke: #00ff66;
 }
 .scanning-pulse-text {
 font-family: 'Orbitron', sans-serif; font-size: 0.95rem; letter-spacing: 3px;
 color: #00f3ff; text-shadow: 0 0 12px #00f3ff;
-animation: blinkText 0.8s infinite alternate;
+animation: blinkText 0.7s infinite alternate;
 }
 @keyframes blinkText { 0% { opacity: 0.45; } 100% { opacity: 1; } }
-/* VERDICT SHAPES: TRANSPARENT RED RECTANGLE vs NEON BLUE CIRCLE */
+.unlock-float-text {
+font-family: 'Black Ops One', 'Orbitron', sans-serif;
+font-size: 2.8rem; letter-spacing: 5px; margin-top: 8px;
+animation: floatUpReveal 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes floatUpReveal {
+0% { transform: translateY(25px) scale(0.7); opacity: 0; }
+100% { transform: translateY(0) scale(1.08); opacity: 1; }
+}
 .verdict-stage { display: flex; flex-direction: column; align-items: center; width: 100%; }
 .verdict-hero {
 display: flex; flex-direction: column; align-items: center; justify-content: center;
 margin: 15px auto; transition: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
 }
-/* RISKY: Transparent Red Rectangle Box */
 .shape-risky {
 width: 290px; height: 145px; border-radius: 16px;
 background: rgba(255, 0, 51, 0.16);
@@ -276,7 +286,6 @@ box-shadow: 0 0 35px rgba(255, 30, 86, 0.65), inset 0 0 25px rgba(255, 30, 86, 0
 color: #ff1e56;
 text-shadow: 0 0 18px rgba(255, 30, 86, 0.9);
 }
-/* SAFE: Neon Blue Glowing Circle */
 .shape-safe {
 width: 195px; height: 195px; border-radius: 50%;
 background: rgba(0, 243, 255, 0.12);
@@ -285,7 +294,6 @@ box-shadow: 0 0 40px rgba(0, 243, 255, 0.75), inset 0 0 28px rgba(0, 243, 255, 0
 color: #00f3ff;
 text-shadow: 0 0 20px rgba(0, 243, 255, 0.95);
 }
-/* 2-SECOND BLINK ANIMATION */
 .blink-2s { animation: flashVerdict 0.4s ease-in-out 5; }
 @keyframes flashVerdict {
 0%, 100% { opacity: 1; transform: scale(1); }
@@ -293,7 +301,6 @@ text-shadow: 0 0 20px rgba(0, 243, 255, 0.95);
 }
 .verdict-word { font-family: 'Black Ops One', 'Orbitron', sans-serif; font-size: 2.6rem; letter-spacing: 4px; line-height: 1.1; }
 .verdict-percent { font-family: 'Orbitron', sans-serif; font-size: 1.6rem; font-weight: 900; color: #fff; margin-top: 4px; }
-/* COMPACT TOP SIDE-BY-SIDE STATE AFTER 2 SECONDS */
 .verdict-hero.docked-top {
 width: 100%; height: auto; border-radius: 12px;
 flex-direction: row; justify-content: center; gap: 18px;
@@ -301,7 +308,6 @@ padding: 12px 22px; margin: 0 0 18px 0;
 }
 .verdict-hero.docked-top .verdict-word { font-size: 1.8rem; }
 .verdict-hero.docked-top .verdict-percent { font-size: 1.5rem; margin-top: 0; }
-/* DETAILS PANEL BELOW DOCKED BADGE */
 .details-panel { width: 100%; text-align: left; animation: fadeUpSub 0.5s ease-out forwards; }
 @keyframes fadeUpSub {
 0% { transform: translateY(15px); opacity: 0; }
@@ -312,21 +318,37 @@ background: rgba(0, 243, 255, 0.1); border: 1px solid #00f3ff;
 color: #67e8f9; font-family: 'Fira Code', monospace; font-size: 0.78rem;
 padding: 8px 12px; border-radius: 8px; margin-bottom: 14px; word-break: break-all;
 }
+/* FIXED GREEN BOX SO TEXT STAYS INSIDE WITH CLEAN SPACING */
 .action-green-box {
+width: 100%;
+max-width: 100%;
 background: rgba(0, 255, 102, 0.08);
 border: 1.5px solid rgba(0, 255, 102, 0.5);
 border-radius: 12px; padding: 16px; margin-bottom: 14px;
 box-shadow: inset 0 0 18px rgba(0, 255, 102, 0.12);
+overflow-wrap: break-word;
+word-wrap: break-word;
 }
 .box-title-green {
 font-family: 'Orbitron', sans-serif; font-size: 0.78rem; font-weight: 900;
 color: #00ff66; letter-spacing: 1.5px; margin-bottom: 8px;
 }
 .live-typing-green {
-font-family: 'Fira Code', monospace; font-size: 0.86rem; line-height: 1.55;
-color: #6ee7b7; min-height: 44px;
+display: block;
+width: 100%;
+font-family: 'Rajdhani', sans-serif;
+font-size: 1.05rem;
+font-weight: 600;
+line-height: 1.55;
+letter-spacing: 0.3px;
+color: #6ee7b7;
+min-height: 44px;
+white-space: normal;
+word-break: break-word;
+overflow-wrap: anywhere;
 }
 .alert-footer-box {
+width: 100%;
 display: flex; align-items: flex-start; gap: 10px;
 background: rgba(255, 255, 255, 0.04);
 border: 1px solid rgba(255, 255, 255, 0.15);
@@ -338,4 +360,11 @@ padding: 3px 10px; border-radius: 5px; letter-spacing: 1px; flex-shrink: 0; marg
 }
 .pill-danger { background: #ff1e56; color: #fff; box-shadow: 0 0 12px #ff1e56; }
 .pill-safe { background: #00f3ff; color: #02040a; box-shadow: 0 0 12px #00f3ff; }
-.short-reason { font-size: 0.85rem; color: #e2e8f0; line-height: 1.45; }
+.short-reason {
+flex: 1;
+font-size: 0.9rem;
+color: #e2e8f0;
+line-height: 1.45;
+word-break: break-word;
+overflow-wrap: anywhere;
+}
