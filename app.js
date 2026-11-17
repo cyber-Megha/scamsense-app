@@ -110,12 +110,18 @@ function showResult(res) {
 async function sendReq(endpoint, formData, name) {
     setScanning(name);
     try {
-        const r = await fetch(API_BASE + endpoint, { method: "POST", body: formData });
+        const r = await fetch("/api/scan" + endpoint, { method: "POST", body: formData });
+        if (!r.ok) {
+            const errText = await r.text();
+            alert("Server Error (" + r.status + "): " + errText);
+            return;
+        }
         showResult(await r.json());
     } catch (e) {
-        alert("Backend server is not running! Make sure uvicorn is active on port 8000.");
+        alert("Connection Error: " + e.message);
     }
 }
+
 
 function scanURL() { const v = document.getElementById("urlInput").value.trim(); if (!v) return alert("Enter a URL!"); const fd = new FormData(); fd.append("url", v); sendReq("/url", fd, "URL"); }
 function scanQR() { const f = document.getElementById("qrInput").files; if (!f) return alert("Upload a QR image!"); const fd = new FormData(); fd.append("file", f); sendReq("/qr", fd, "QR"); }
