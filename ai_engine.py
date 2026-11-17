@@ -1,24 +1,14 @@
 import os
 import json
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from PIL import Image
 import io
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
-def get_working_model(use_json=True):
-    # আপনার API Key-র জন্য সচল থাকা সেরা মডেলটি অটোমেটিক খুঁজে নেবে
-    available = [
-        m.name for m in genai.list_models()
-        if 'generateContent' in m.supported_generation_methods and 'flash' in m.name.lower()
-    ]
-    model_name = available[0] if available else 'gemini-flash-latest'
-    config = {"response_mime_type": "application/json"} if use_json else {}
-    return genai.GenerativeModel(model_name, generation_config=config)
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = None, extra_intel: dict = None):
     try:
-        model = get_working_model(use_json=True)
         prompt = f"""
         You are an elite Cybersecurity Threat Analyst for 'ScamSense'. 
         Analyze the following {content_type} for phishing, fraud, malware, or social engineering.
@@ -42,12 +32,18 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
         
         Content to analyze: {text_data}
         """
-        inputs = [prompt]
+        contents = [prompt]
         if image_bytes:
             img = Image.open(io.BytesIO(image_bytes))
-            inputs.append(img)
+            contents.append(img)
             
-        response = model.generate_content(inputs)
+        response = client.models.generate_content(
+            model='gemini-3.8-flash',
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
         return json.loads(response.text)
     except Exception as e:
         return {
@@ -55,6 +51,6 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
             "risk_level": "CAUTION",
             "threat_category": "System Alert",
             "why_risky": [f"AI Engine Note: {str(e)}"],
-            "how_to_stay_safe": ["Check your GEMINI_API_KEY in Render Environment settings.", "Do not trust unverified links."],
+            "how_to_stay_safe": ["Verify your GEMINI_API_KEY in Render Environment settings."],
             "technical_indicators": "Fallback safety handler active."
         }
