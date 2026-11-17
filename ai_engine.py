@@ -11,7 +11,7 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 generation_config = {
     "response_mime_type": "application/json",
 }
-model = genai.GenerativeModel('gemini-2.5-flash', generation_config=generation_config)
+model = genai.GenerativeModel('gemini-3.0-flash', generation_config=generation_config)
 
 def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = None, extra_intel: dict = None):
     prompt = f"""
