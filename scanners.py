@@ -3,9 +3,7 @@ import io
 from PIL import Image
 import google.generativeai as genai
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 def extract_text_from_document(file_bytes: bytes, filename: str) -> str:
@@ -20,9 +18,13 @@ def extract_text_from_document(file_bytes: bytes, filename: str) -> str:
     return "Unsupported document format. Please upload PDF or TXT."
 
 def decode_qr_from_image(file_bytes: bytes) -> str:
-    # Gemini Vision ব্যবহার করে ১০০% নির্ভুলভাবে QR কোডের ভেতরের টেক্সট/লিংক ডিকোড করা (কোনো DLL এরর ছাড়াই)
     img = Image.open(io.BytesIO(file_bytes))
-    model = genai.GenerativeModel('gemini-3.0-flash')
+    available = [
+        m.name for m in genai.list_models()
+        if 'generateContent' in m.supported_generation_methods and 'flash' in m.name.lower()
+    ]
+    model_name = available[0] if available else 'gemini-flash-latest'
+    model = genai.GenerativeModel(model_name)
     response = model.generate_content([
         "Extract ONLY the exact URL or text encoded inside this QR code. If there is no QR code, reply strictly with NONE.", 
         img
