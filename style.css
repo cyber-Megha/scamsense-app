@@ -8,7 +8,6 @@ body {
     min-height: 100vh;
     overflow-x: hidden;
     padding-bottom: 50px;
-    /* Grand Static Electric Blue, Purple & Extra Bright Pink Glow */
     background-image: 
         radial-gradient(circle at 18% 22%, rgba(0, 210, 255, 0.38), transparent 48%),
         radial-gradient(circle at 82% 28%, rgba(255, 20, 147, 0.46), transparent 50%),
@@ -22,7 +21,7 @@ body {
     filter: blur(0.6px);
 }
 
-/* 5-SEC HOLLYWOOD HACKER DECRYPTION & GLITCH INTRO (MATCHING BLUE-PINK-PURPLE BACKDROP) */
+/* 5-SEC HOLLYWOOD HACKER DECRYPTION & GLITCH INTRO WITH AUTO-HIDE BACKUP */
 #splash-screen {
     position: fixed; inset: 0; z-index: 9999;
     background-color: #050718;
@@ -33,8 +32,15 @@ body {
         radial-gradient(circle at 30% 75%, rgba(124, 58, 237, 0.42), transparent 52%),
         linear-gradient(180deg, #050a24 0%, #0d0521 50%, #04071a 100%);
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    overflow: hidden; transition: opacity 0.8s ease;
+    overflow: hidden;
+    transition: opacity 0.8s ease;
+    animation: autoHideSplash 0.8s ease 5s forwards;
 }
+
+@keyframes autoHideSplash {
+    to { opacity: 0; visibility: hidden; pointer-events: none; }
+}
+
 .scanner-beam {
     position: absolute; top: 0; left: 0; width: 100%; height: 4px;
     background: linear-gradient(90deg, transparent, #ff1493, #00f3ff, transparent);
@@ -211,8 +217,8 @@ main { max-width: 1200px; margin: 40px auto 0; padding: 0 22px; perspective: 120
     background: linear-gradient(155deg, rgba(16, 10, 38, 0.94), rgba(6, 12, 32, 0.96));
     border: 1.5px solid rgba(255, 20, 147, 0.6);
     border-radius: 22px; padding: 34px 28px;
-box-shadow: 0 30px 80px #000, 0 0 45px rgba(255, 20, 147, 0.3);
-text-align: center;
+    box-shadow: 0 30px 80px #000, 0 0 45px rgba(255, 20, 147, 0.3);
+    text-align: center;
 animation: popZoomIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes popZoomIn {
