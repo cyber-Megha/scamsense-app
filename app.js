@@ -1,4 +1,3 @@
-javascript
 // 1. 5-Second Hollywood Hacker Decryption Intro Controller
 const statusMessages = [
     "BYPASSING PROXY PROTOCOLS...",
@@ -23,42 +22,44 @@ setTimeout(() => {
     }
 }, 5000);
 
-// 2. Static Grand Electric Blue, Purple & Bright Pink Cyber Code Texture (No Movement)
-const canvas = document.getElementById("bg-canvas");
-const ctx = canvas.getContext("2d");
-
+// 2. Static Grand Electric Blue, Purple & Bright Pink Cyber Code Texture (Matching Your Image)
 function renderStaticCyberBackdrop() {
+    const canvas = document.getElementById("bg-canvas");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const glyphs = "01アイウエオカキクケコ01011001XYZ<>/{}[]";
     const colors = [
-        "rgba(255, 20, 147, 0.34)",  // Extra Bright Neon Pink
-        "rgba(255, 60, 180, 0.30)",  // Hot Magenta Pink
-        "rgba(0, 243, 255, 0.30)",   // Electric Cyan Blue
-        "rgba(99, 102, 241, 0.26)",  // Deep Cyber Indigo
-        "rgba(192, 38, 211, 0.30)"   // Vibrant Purple
+        "rgba(255, 20, 147, 0.58)",  // Vivid Neon Pink
+        "rgba(255, 70, 190, 0.52)",  // Bright Magenta
+        "rgba(0, 243, 255, 0.55)",   // Electric Cyan Blue
+        "rgba(56, 189, 248, 0.48)",  // Sky Cyber Blue
+        "rgba(192, 38, 211, 0.52)"   // Neon Purple
     ];
 
-    const colWidth = 18;
-    const rowHeight = 16;
+    const colWidth = 16;
+    const rowHeight = 15;
     const cols = Math.ceil(canvas.width / colWidth);
     const rows = Math.ceil(canvas.height / rowHeight);
 
-    ctx.font = "600 12px 'Fira Code', monospace";
+    ctx.font = "bold 12px 'Fira Code', monospace";
 
     for (let c = 0; c < cols; c++) {
-        if (Math.random() > 0.68) continue;
+        if (Math.random() > 0.72) continue;
         const colColor = colors[Math.floor(Math.random() * colors.length)];
-        const startRow = Math.floor(Math.random() * 8);
-        const endRow = rows - Math.floor(Math.random() * 8);
+        const startRow = Math.floor(Math.random() * 6);
+        const endRow = rows - Math.floor(Math.random() * 6);
 
-        ctx.fillStyle = colColor.replace(/0\.\d+\)/, "0.06)");
-        ctx.fillRect(c * colWidth, startRow * rowHeight, 10, (endRow - startRow) * rowHeight);
+        // Glowing vertical data beam behind characters
+        ctx.fillStyle = colColor.replace(/0\.\d+\)/, "0.11)");
+        ctx.fillRect(c * colWidth - 1, startRow * rowHeight, 11, (endRow - startRow) * rowHeight);
 
         for (let r = startRow; r < endRow; r++) {
-            if (Math.random() > 0.72) continue;
+            if (Math.random() > 0.76) continue;
             const char = glyphs[Math.floor(Math.random() * glyphs.length)];
             ctx.fillStyle = colColor;
             ctx.fillText(char, c * colWidth, r * rowHeight);
@@ -184,8 +185,8 @@ async function sendReq(endpoint, formData, name) {
 }
 
 function scanURL() { const v = document.getElementById("urlInput").value.trim(); if (!v) return alert("Enter a URL!"); const fd = new FormData(); fd.append("url", v); sendReq("/url", fd, "URL"); }
-function scanQR() { const f = document.getElementById("qrInput").files; if (!f) return alert("Upload a QR image!"); const fd = new FormData(); fd.append("file", f); sendReq("/qr", fd, "QR"); }
+function scanQR() { const f = document.getElementById("qrInput").files[0]; if (!f) return alert("Upload a QR image!"); const fd = new FormData(); fd.append("file", f); sendReq("/qr", fd, "QR"); }
 function scanEmail() { const s = document.getElementById("emailSender").value.trim(); const b = document.getElementById("emailBody").value.trim(); if (!b) return alert("Paste email content!"); const fd = new FormData(); fd.append("sender", s); fd.append("body", b); sendReq("/email", fd, "EMAIL"); }
 function scanMessage() { const m = document.getElementById("msgInput").value.trim(); if (!m) return alert("Paste message!"); const fd = new FormData(); fd.append("message", m); sendReq("/message", fd, "MESSAGE"); }
-function scanDocument() { const f = document.getElementById("docInput").files; if (!f) return alert("Upload PDF/TXT!"); const fd = new FormData(); fd.append("file", f); sendReq("/document", fd, "DOCUMENT"); }
-function scanImage() { const f = document.getElementById("imgInput").files; if (!f) return alert("Upload an image!"); const fd = new FormData(); fd.append("file", f); sendReq("/image", fd, "IMAGE"); }
+function scanDocument() { const f = document.getElementById("docInput").files[0]; if (!f) return alert("Upload PDF/TXT!"); const fd = new FormData(); fd.append("file", f); sendReq("/document", fd, "DOCUMENT"); }
+function scanImage() { const f = document.getElementById("imgInput").files[0]; if (!f) return alert("Upload an image!"); const fd = new FormData(); fd.append("file", f); sendReq("/image", fd, "IMAGE"); }
