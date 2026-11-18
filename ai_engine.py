@@ -1,4 +1,4 @@
-import os, json, hashlib, io, requests
+import os, json, hashlib, io, re, requests
 from google import genai
 from google.genai import types
 from PIL import Image
@@ -17,12 +17,9 @@ def get_tier(score: int) -> str:
 
 def parse_ai_json(raw_text: str):
     cleaned = raw_text.strip()
-    if "```" in cleaned:
-        parts = cleaned.split("```")
-        cleaned = parts if len(parts) > 1 else parts
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:]
-    parsed = json.loads(cleaned.strip())
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE).strip()
+    parsed = json.loads(cleaned)
     parsed["risk_score"] = int(parsed.get("risk_score", 0))
     parsed["classification"] = get_tier(parsed["risk_score"])
     return parsed
@@ -42,7 +39,9 @@ def call_groq_ai(prompt: str):
             timeout=12
         )
         if r.status_code == 200:
-            return parse_ai_json(r.json()["choices"]["message"]["content"])
+            content = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            if content:
+                return parse_ai_json(content)
     except Exception: pass
     return None
 
@@ -57,7 +56,9 @@ def call_openrouter_ai(prompt: str):
                 timeout=14
             )
             if r.status_code == 200:
-                return parse_ai_json(r.json()["choices"]["message"]["content"])
+                content = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                if content:
+                    return parse_ai_json(content)
         except Exception: continue
     return None
 
@@ -92,13 +93,18 @@ def emergency_fallback(content_type: str, text_data: str, extra_intel: dict):
             "how_to_stay_safe": ["Terminate access immediately and never enter passwords, OTPs, or financial details."]
         }
 
-    is_risky = any(dom.endswith(e) for e in (".cfd", ".sbs", ".icu", ".it.com", ".xyz", ".top", ".tk", ".click", ".cyou", ".bond")) or uf.get("has_at_symbol_trap") or bool(uf.get("spoofed_domains_in_path"))
-    score = 88 if is_risky else (45 if uf.get("protocol") == "HTTP" else 10)
+    is_risky = (
+        any(dom.endswith(e) for e in (".cfd", ".sbs", ".icu", ".it.com", ".xyz", ".top", ".tk", ".click", ".cyou", ".bond"))
+        or uf.get("has_at_symbol_trap")
+        or bool(uf.get("spoofed_domains_in_path"))
+        or ("familly" in dom or "paypa1" in dom or "arnazon" in dom or dom.count("-") >= 2)
+    )
+    score = 86 if is_risky else (45 if uf.get("protocol") == "HTTP" else 14)
     tier = get_tier(score)
     return {
         "risk_score": score, "classification": tier,
         "what_was_detected": f"Deep structural inspection completed for {content_type} ({dom}).",
-        "why_suspicious": "High-abuse disposable domain extension, URL path obfuscation, or brand spoofing patterns detected." if tier == "HIGH RISK" else ("Unencrypted HTTP transmission or unverified host posture requires caution." if tier == "SUSPICIOUS" else "Domain infrastructure, encryption certificate, and routing telemetry show clean legitimate behavior."),
+        "why_suspicious": "High-abuse domain pattern, typosquatting spelling anomaly, or multi-hyphen phishing structure detected." if tier == "HIGH RISK" else ("Unencrypted HTTP transmission or unverified host posture requires caution." if tier == "SUSPICIOUS" else "Domain infrastructure, encryption certificate, and routing telemetry show clean legitimate behavior."),
         "how_affects_user": "Safe for standard browsing and legitimate access." if tier == "SAFE" else "Users risk credential interception, identity spoofing, or unauthorized data harvesting.",
         "evidence": f"Domain: {dom} | Protocol: {uf.get('protocol', 'Checked')} | SSL: {uf.get('ssl_status', 'Checked')} | Entropy: {uf.get('shannon_entropy', 'Normal')}",
         "how_to_stay_safe": ["Proceed safely while maintaining standard security hygiene." if tier == "SAFE" else "Do not submit login credentials or personal data; verify via the official HTTPS portal."]
@@ -117,7 +123,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
     Telemetry Data: {json.dumps(intel)}
 
     STRICT EVALUATION RULES:
-    - Disposable/abuse TLDs (.cfd, .sbs, .icu, .it.com, .xyz, .top, .cyou), brand-domain mismatches (e.g., matsui-n.cfd, ://it.com), randomized URL path slugs, '@' authority traps, path spoofing, missing DNS MX/SPF records, and polite scam texts hiding unofficial links MUST be scored HIGH RISK (78-98%).
+    - Inspect domain spelling for subtle typosquatting (e.g., 'familly' instead of 'family', 'arnazon', 'paypa1'), multi-hyphen lure domains (e.g., 'prime-familly-assistance.com'), '/index.php' phishing kit endpoints, disposable TLDs (.cfd, .sbs, .icu, .it.com, .xyz, .top), brand-domain mismatches, '@' traps, path spoofing, missing DNS MX/SPF records, and polite scam texts hiding unofficial links — score these HIGH RISK (78-98%).
     - Verified official domains (google.com, hdfcbank.com, salik.ltd, etc.) with valid encryption and clean telemetry MUST be scored SAFE (1-22%).
     - Strict Tiers: 0-30="SAFE", 31-60="SUSPICIOUS", 61-100="HIGH RISK".
 
