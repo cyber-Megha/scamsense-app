@@ -24,6 +24,7 @@ def inspect_url_forensics(raw_url: str):
         "subdomain_count": max(0, len(domain.split(".")) - 2),
         "has_punycode": "xn--" in domain,
         "uses_ip": bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain)),
+        "is_shortener": any(s in domain for s in ["bit.ly", "tinyurl.com", "t.co", "rb.gy", "is.gd", "cutt.ly", "shorturl.at", "ow.ly"]),
         "redirect_chain": [],
         "final_destination": target,
         "domain_created_date": "Unknown",
@@ -32,7 +33,6 @@ def inspect_url_forensics(raw_url: str):
         "dns_resolved": False
     }
 
-    # 1. DNS Resolution Check
     try:
         ip = socket.gethostbyname(domain)
         forensics["dns_resolved"] = True
@@ -40,24 +40,21 @@ def inspect_url_forensics(raw_url: str):
     except Exception:
         forensics["dns_resolved"] = False
 
-    # 2. Live HTTP Redirect Chain Tracing (Catches hidden masked links)
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ScamSense-ForensicBot/2.0"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ScamSense-ForensicBot/3.0"}
         resp = requests.get(target, headers=headers, timeout=6, allow_redirects=True)
         forensics["redirect_chain"] = [r.url for r in resp.history] + [resp.url]
         forensics["final_destination"] = resp.url
         forensics["http_status"] = resp.status_code
     except Exception as e:
-        forensics["connection_note"] = f"Unreachable or blocked probe: {str(e)[:80]}"
+        forensics["connection_note"] = f"Probe blocked or unreachable: {str(e)[:70]}"
 
-    # 3. RDAP Domain Age Lookup (Catches brand-new phishing domains pretending to be old banks/brands)
     try:
         parts = domain.split(".")
         root_domain = ".".join(parts[-2:]) if len(parts) >= 2 else domain
         rdap_res = requests.get(f"https://rdap.org{root_domain}", timeout=4)
         if rdap_res.status_code == 200:
-            events = rdap_res.json().get("events", [])
-            for ev in events:
+            for ev in rdap_res.json().get("events", []):
                 if ev.get("eventAction") == "registration":
                     reg_str = ev.get("eventDate", "")[:10]
                     forensics["domain_created_date"] = reg_str
@@ -67,7 +64,6 @@ def inspect_url_forensics(raw_url: str):
     except Exception:
         pass
 
-    # 4. SSL Certificate Inspection
     try:
         ctx = ssl.create_default_context()
         with socket.create_connection((domain, 443), timeout=4) as sock:
@@ -86,7 +82,7 @@ def check_google_safe_browsing(url: str):
     try:
         endpoint = f"https://googleapis.com{GSB_API_KEY}"
         payload = {
-            "client": {"clientId": "scamsense-app", "clientVersion": "2.0"},
+            "client": {"clientId": "scamsense-app", "clientVersion": "3.0"},
             "threatInfo": {
                 "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
                 "platformTypes": ["ANY_PLATFORM"],
@@ -100,7 +96,7 @@ def check_google_safe_browsing(url: str):
             if "matches" in data and len(data["matches"]) > 0:
                 return {
                     "is_dangerous": True,
-                    "threat_type": data["matches"].get("threatType", "MALICIOUS"),
+                    "threat_type": data["matches"][0].get("threatType", "MALICIOUS"),
                     "source": "Google Safe Browsing"
                 }
             return {"is_dangerous": False, "source": "Google Safe Browsing"}
@@ -110,13 +106,13 @@ def check_google_safe_browsing(url: str):
 
 def check_virustotal_url(url: str):
     forensic_data = inspect_url_forensics(url)
-    gsb_result = check_google_safe_browsing(forensic_data["final_destination"])
+    final_url = forensic_data["final_destination"]
+    gsb_result = check_google_safe_browsing(final_url)
     vt_result = {"status": "skipped", "malicious": 0}
 
     if VT_API_KEY:
         try:
-            target_to_check = forensic_data["final_destination"]
-            url_id = base64.urlsafe_b64encode(target_to_check.encode()).decode().strip("=")
+            url_id = base64.urlsafe_b64encode(final_url.encode()).decode().strip("=")
             headers = {"x-apikey": VT_API_KEY}
             api_endpoint = "https://virustotal.com" + url_id
             response = requests.get(api_endpoint, headers=headers, timeout=6)
