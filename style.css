@@ -169,7 +169,7 @@ main { max-width: 1200px; margin: 40px auto 0; padding: 0 22px; perspective: 120
 .close-popup-btn {
     position: absolute; top: 14px; right: 16px;
     background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.25);
-    color: #cbd5e1; font-family: 'Fira Code', monospace; font-size: 0.75rem;
+color: #cbd5e1; font-family: 'Fira Code', monospace; font-size: 0.75rem;
 padding: 5px 12px; border-radius: 8px; cursor: pointer; transition: 0.2s;
 }
 .close-popup-btn:hover { background: #ff1493; color: #fff; border-color: #ff1493; }
