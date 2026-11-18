@@ -16,12 +16,15 @@ app.add_middleware(
 )
 
 def extract_and_scan_embedded_urls(text: str):
-    urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text or "")
-    intel_reports = []
-    for u in urls[:3]:
-        clean_u = u.rstrip(".,;:!?)")
-        intel_reports.append(check_virustotal_url(clean_u))
-    return intel_reports if intel_reports else None
+    try:
+        urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text or "")
+        intel_reports = []
+        for u in urls[:3]:
+            clean_u = u.rstrip(".,;:!?)")
+            intel_reports.append(check_virustotal_url(clean_u))
+        return intel_reports if intel_reports else None
+    except Exception:
+        return None
 
 @app.post("/api/scan/url")
 async def scan_url(url: str = Form(...)):
