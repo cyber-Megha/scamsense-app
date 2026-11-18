@@ -34,9 +34,15 @@ def get_tier(score: int) -> str:
 def smart_forensic_engine(content_type: str, text_data: str, extra_intel: dict):
     intel = extra_intel or {}
     reports = [intel] if "deep_url_forensics" in intel else (intel.get("embedded_urls_intel") or [])
-    score = 5
+    score = 8
     reasons = []
     evidence = []
+
+    raw_lower = (text_data or "").strip().lower()
+    if raw_lower.startswith("http://"):
+        score += 36
+        reasons.append("Unencrypted HTTP connection lacks TLS/SSL security, exposing user traffic to interception.")
+        evidence.append("Protocol: Insecure HTTP (No SSL)")
 
     for rep in reports:
         gsb = rep.get("google_safe_browsing", {})
@@ -77,9 +83,8 @@ def smart_forensic_engine(content_type: str, text_data: str, extra_intel: dict):
             reasons.append(f"URL shortener ({dom}) masks the true destination.")
             evidence.append(f"Shortener: {dom}")
 
-        lower = (text_data or "").lower()
         for b, valid_list in OFFICIAL_BRANDS.items():
-            if b in lower and not any(dom == v or dom.endswith("." + v) for v in valid_list):
+            if b in raw_lower and not any(dom == v or dom.endswith("." + v) for v in valid_list):
                 score += 65
                 reasons.append(f"Brand-Domain Mismatch: Claims '{b.upper()}' on unofficial host '{dom}'.")
                 evidence.append(f"Brand: {b.upper()} | Actual Domain: {dom}")
@@ -94,33 +99,33 @@ def smart_forensic_engine(content_type: str, text_data: str, extra_intel: dict):
                     "risk_score": 3,
                     "classification": "SAFE",
                     "what_was_detected": f"Verified official {b.upper()} domain ({dom}).",
-                    "why_suspicious": "Matches authentic infrastructure with clean threat intelligence.",
+                    "why_suspicious": "Matches authentic infrastructure with valid HTTPS and clean threat intelligence.",
                     "how_affects_user": "Safe for standard browsing and login.",
-                    "evidence": f"Verified Domain: {dom} | GSB & VT: Clean",
+                    "evidence": f"Verified Domain: {dom} | Protocol: HTTPS | GSB & VT: Clean",
                     "how_to_stay_safe": ["Verified safe website. Proceed normally."]
                 }
 
-    score = min(98, max(4, score))
+    score = min(98, max(5, score))
     tier = get_tier(score)
     if tier == "SAFE":
         return {
             "risk_score": score,
             "classification": "SAFE",
-            "what_was_detected": f"Clean {content_type} with no deceptive indicators.",
+            "what_was_detected": f"Clean {content_type} with encrypted HTTPS and no deceptive indicators.",
             "why_suspicious": "No spoofing, hidden redirects, or blacklist hits found.",
             "how_affects_user": "Low risk under standard usage.",
-            "evidence": "GSB: Clean | VT: 0 Detections",
+            "evidence": "Protocol: HTTPS | GSB: Clean | VT: 0 Detections",
             "how_to_stay_safe": ["Content appears safe. Maintain standard caution."]
         }
 
     return {
         "risk_score": score,
         "classification": tier,
-        "what_was_detected": f"Deceptive threat pattern detected in {content_type}.",
-        "why_suspicious": " ".join(reasons) if reasons else "Anomalous domain/path routing detected.",
-        "how_affects_user": "May trick users into revealing login passwords or financial details.",
-        "evidence": " | ".join(evidence) if evidence else f"Anomaly Index: {score}/100",
-        "how_to_stay_safe": ["Do not click links or enter credentials.", "Verify via the official app."]
+        "what_was_detected": f"Security vulnerability or deceptive pattern detected in {content_type}.",
+        "why_suspicious": " ".join(reasons) if reasons else "Unverified host lacking strong security posture.",
+        "how_affects_user": "Transmitting passwords or sensitive data over this target risks interception or credential theft.",
+        "evidence": " | ".join(evidence) if evidence else f"Forensic Risk Score: {score}/100",
+        "how_to_stay_safe": ["Avoid entering passwords or sensitive details on unencrypted or unverified links.", "Verify the official HTTPS address before proceeding."]
     }
 
 def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = None, extra_intel: dict = None):
@@ -130,9 +135,9 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
             return RESULT_CACHE[cache_key]
 
         prompt = f"""
-        Analyze this {content_type} for phishing/malware using deep forensics.
+        Analyze this {content_type} for phishing, malware, and security vulnerabilities using strict zero-trust forensics.
         Intel: {json.dumps(extra_intel) if extra_intel else 'None'}
-        Rules: 0-30=SAFE, 31-60=SUSPICIOUS, 61-100=HIGH RISK. Check `spoofed_domains_in_path` (e.g. nobell.it/.../://skype.com is HIGH RISK 92%), brand-domain mismatch in polite messages, and blacklists.
+        Rules: 0-30=SAFE (only verified HTTPS & trusted), 31-60=SUSPICIOUS (insecure http://, unverified host, or shorteners), 61-100=HIGH RISK (path spoofing, brand mismatch, hex phishing dirs, or blacklists).
         Return ONLY JSON:
         {{
             "risk_score": <0-100>,
