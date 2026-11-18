@@ -3,10 +3,10 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from scanners import extract_text_from_document, decode_qr_from_image
-from threat_intel import check_virustotal_url
+from threat_intel import check_virustotal_url, check_email_domain_dns
 from ai_engine import analyze_threat
 
-app = FastAPI(title="ScamSense 6-in-1 Threat Intelligence API", version="3.0")
+app = FastAPI(title="ScamSense 7-Layer Zero-Trust Threat Engine", version="5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,8 +45,13 @@ async def scan_qr(file: UploadFile = File(...)):
 @app.post("/api/scan/email")
 async def scan_email(sender: str = Form(""), subject: str = Form(""), body: str = Form(...)):
     email_full = f"Sender: {sender}\nSubject: {subject}\nEmail Body: {body}"
+    dns_intel = check_email_domain_dns(sender)
     embedded_intel = extract_and_scan_embedded_urls(email_full)
-    result = analyze_threat(content_type="Email Phishing Check", text_data=email_full, extra_intel={"embedded_urls_intel": embedded_intel})
+    result = analyze_threat(
+        content_type="Email Phishing Check",
+        text_data=email_full,
+        extra_intel={"sender_dns_forensics": dns_intel, "embedded_urls_intel": embedded_intel}
+    )
     return {"status": "success", "data": result}
 
 @app.post("/api/scan/message")
