@@ -15,6 +15,28 @@ client = genai.Client(
 
 RESULT_CACHE = {}
 
+OFFICIAL_BRAND_MAP = {
+    "sbi": ["onlinesbi.sbi", "sbi.co.in", "sbicard.com"],
+    "hdfc": ["hdfcbank.com", "hdfc.com"],
+    "icici": ["icicibank.com", "icicidirect.com"],
+    "axis": ["axisbank.com"],
+    "kotak": ["kotak.com"],
+    "pnb": ["pnbindia.in"],
+    "paytm": ["paytm.com"],
+    "phonepe": ["phonepe.com"],
+    "google": ["google.com", "google.co.in", "googleapis.com"],
+    "facebook": ["facebook.com", "fb.com"],
+    "instagram": ["instagram.com"],
+    "whatsapp": ["whatsapp.com"],
+    "amazon": ["amazon.in", "amazon.com"],
+    "flipkart": ["flipkart.com"],
+    "microsoft": ["microsoft.com", "live.com", "office.com"],
+    "apple": ["apple.com", "icloud.com"],
+    "indiapost": ["indiapost.gov.in"],
+    "epfo": ["epfindia.gov.in"],
+    "incometax": ["incometax.gov.in"]
+}
+
 def get_3_tier_level(score: int) -> str:
     if score <= 30:
         return "SAFE"
@@ -33,107 +55,116 @@ def get_active_gemini_model():
         pass
     return "gemini-2.5-flash"
 
+def is_official_domain_for_brand(brand: str, domain: str) -> bool:
+    allowed = OFFICIAL_BRAND_MAP.get(brand, [])
+    return any(domain == d or domain.endswith("." + d) for d in allowed)
+
 def deep_forensic_fallback(content_type: str, text_data: str, extra_intel: dict):
     intel = extra_intel or {}
-    gsb = intel.get("google_safe_browsing", {})
-    vt = intel.get("virustotal", {})
-    url_f = intel.get("deep_url_forensics", {})
+    url_reports = []
+    if "deep_url_forensics" in intel:
+        url_reports.append(intel)
+    elif intel.get("embedded_urls_intel"):
+        url_reports.extend(intel["embedded_urls_intel"])
 
-    if gsb.get("is_dangerous") or vt.get("malicious", 0) > 0:
-        vt_hits = vt.get("malicious", 1)
-        score = min(99, 92 + vt_hits)
-        return {
-            "risk_score": score,
-            "classification": "HIGH RISK",
-            "what_was_detected": f"Verified malicious infrastructure detected at {url_f.get('final_destination', text_data[:60])}.",
-            "why_suspicious": "Even if the surface link appears legitimate, threat intelligence confirms active credential harvesting or malware delivery.",
-            "how_affects_user": "Interacting with this target exposes passwords, banking sessions, and personal data to immediate theft.",
-            "evidence": f"GSB Match: {gsb.get('threat_type', 'TRUE')} | VT Malicious Engines: {vt_hits} | Final URL: {url_f.get('final_destination', 'N/A')}",
-            "how_to_stay_safe": [
-                "Terminate connection immediately and do not enter any credentials or OTP.",
-                "If accessed, change passwords immediately from a clean device."
-            ]
-        }
-
-    score = 6
+    score = 5
     reasons = []
     evidence = []
 
-    # Deep URL Forensics Check
-    if url_f:
-        domain = url_f.get("domain", "")
-        age = url_f.get("domain_age_days")
-        redirects = url_f.get("redirect_chain", [])
+    for rep in url_reports:
+        gsb = rep.get("google_safe_browsing", {})
+        vt = rep.get("virustotal", {})
+        uf = rep.get("deep_url_forensics", {})
+        if gsb.get("is_dangerous") or vt.get("malicious", 0) > 0:
+            vt_hits = vt.get("malicious", 1)
+            return {
+                "risk_score": min(99, 93 + vt_hits),
+                "classification": "HIGH RISK",
+                "what_was_detected": f"Polite or normal surface content concealing a confirmed malicious link ({uf.get('final_destination', 'Blacklisted URL')}).",
+                "why_suspicious": "Even though the message tone appears normal, the embedded destination is actively flagged by global security engines for phishing/malware.",
+                "how_affects_user": "Clicking this link will redirect you to a credential harvester or malware payload capable of draining funds or hijacking accounts.",
+                "evidence": f"GSB Flag: {gsb.get('threat_type', 'MALICIOUS')} | VirusTotal Engines: {vt_hits} | Final Target: {uf.get('final_destination')}",
+                "how_to_stay_safe": [
+                    "Do NOT click the link inside this message, regardless of how genuine the text sounds.",
+                    "Open your official banking/service app directly to verify any statement or update."
+                ]
+            }
+
+    lower_text = (text_data or "").lower()
+    mentioned_brands = [b for b in OFFICIAL_BRAND_MAP.keys() if b in lower_text]
+
+    for rep in url_reports:
+        uf = rep.get("deep_url_forensics", {})
+        dom = uf.get("domain", "")
+        final_dom = urlparse(uf.get("final_destination", "")).netloc.lower() or dom
+        age = uf.get("domain_age_days")
+
+        if uf.get("is_shortener"):
+            score += 38
+            reasons.append(f"Uses URL shortener ({dom}) to hide true destination ({final_dom}).")
+            evidence.append(f"Shortener: {dom} -> {final_dom}")
 
         if age is not None and age < 90:
             score += 48
-            reasons.append(f"Newly registered domain ({age} days old) attempting to appear established.")
-            evidence.append(f"Domain Age: {age} days (Created: {url_f.get('domain_created_date')})")
+            reasons.append(f"Embedded link points to a newly created domain ({age} days old).")
+            evidence.append(f"Domain Age: {age} days ({uf.get('domain_created_date')})")
 
-        if len(redirects) > 1:
-            score += 22
-            reasons.append(f"Hidden multi-hop redirect chain ({len(redirects)} hops) masking the final destination.")
-            evidence.append(f"Redirect Destination: {url_f.get('final_destination')}")
+        if uf.get("has_punycode"):
+            score += 58
+            reasons.append("Homograph Punycode domain spoofing detected.")
+            evidence.append(f"Punycode: {final_dom}")
 
-        if url_f.get("has_punycode"):
-            score += 55
-            reasons.append("Internationalized Punycode (xn--) homograph attack mimicking trusted characters.")
-            evidence.append(f"Punycode Domain: {domain}")
-
-        if url_f.get("subdomain_count", 0) >= 2:
-            score += 32
-            reasons.append("Deep subdomain nesting used to hide the true root domain.")
-            evidence.append(f"Subdomain Depth: {url_f.get('subdomain_count')} in {domain}")
-
-        if "No Valid HTTPS" in url_f.get("ssl_issuer", ""):
+        if "No Valid HTTPS" in uf.get("ssl_issuer", ""):
             score += 20
-            reasons.append("Lacks valid TLS/SSL encryption certificate.")
-            evidence.append("SSL Status: Invalid/Missing")
+            reasons.append("Destination lacks valid SSL/TLS encryption.")
+            evidence.append("SSL: Missing/Invalid")
 
-    # Deep Text / Embedded URL Mismatch Check (Catches polite-looking scam messages)
-    urls_in_text = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text_data or "")
-    lower = (text_data or "").lower()
-    brands = ["sbi", "hdfc", "icici", "axis", "paytm", "phonepe", "amazon", "flipkart", "fedex", "dhl", "indiapost", "epfo", "income tax", "netflix"]
-    mentioned = [b for b in brands if b in lower]
-
-    if mentioned and urls_in_text:
-        for u in urls_in_text:
-            u_dom = urlparse(u if "://" in u else "http://" + u).netloc.lower()
-            if not any(b.replace(" ", "") in u_dom for b in mentioned):
-                score += 58
-                reasons.append(f"Entity-Domain Mismatch: Message claims to be '{mentioned.upper()}' but embeds an unrelated external link ({u_dom}).")
-                evidence.append(f"Claimed Entity: {mentioned.upper()} != Embedded Domain: {u_dom}")
+        for b in mentioned_brands:
+            if not is_official_domain_for_brand(b, final_dom):
+                score += 65
+                reasons.append(f"Deceptive Brand-Domain Mismatch: Content pretends to be '{b.upper()}' using a calm/normal tone, but links to an unauthorized domain ({final_dom}).")
+                evidence.append(f"Claimed Brand: {b.upper()} | Actual Domain: {final_dom}")
                 break
 
-    if any(ext in lower for ext in [".apk", ".exe", ".scr", ".bat", "upi://pay"]):
-        score += 62
-        reasons.append("Contains direct executable payload or hidden UPI payment collection URI.")
-        evidence.append("Dangerous Payload URI / Executable Extension Detected")
+    if content_type == "Website URL" and url_reports:
+        uf = url_reports[0].get("deep_url_forensics", {})
+        dom = uf.get("domain", "")
+        for b in OFFICIAL_BRAND_MAP:
+            if is_official_domain_for_brand(b, dom):
+                return {
+                    "risk_score": 3,
+                    "classification": "SAFE",
+                    "what_was_detected": f"Verified official {b.upper()} domain ({dom}).",
+                    "why_suspicious": "Domain matches the official verified infrastructure with valid TLS encryption and clean threat intelligence.",
+                    "how_affects_user": "Safe for legitimate browsing and account access.",
+                    "evidence": f"Verified Domain: {dom} | SSL: {uf.get('ssl_issuer')} | GSB & VT: Clean",
+                    "how_to_stay_safe": ["Verified official website. Always ensure you are on the exact HTTPS domain before entering passwords."]
+                }
 
-    score = min(98, max(5, score))
+    score = min(98, max(4, score))
     tier = get_3_tier_level(score)
 
     if tier == "SAFE":
         return {
             "risk_score": score,
             "classification": "SAFE",
-            "what_was_detected": f"Authentic and technically consistent {content_type} with verified infrastructure.",
-            "why_suspicious": "Domain age, SSL certificate, redirect path, and linguistic structure show zero signs of deception.",
-            "how_affects_user": "Safe for normal interaction with no hidden payload or credential trap detected.",
-            "evidence": f"Domain: {url_f.get('domain', 'Verified Text')} | SSL: {url_f.get('ssl_issuer', 'Valid')} | Age: {url_f.get('domain_age_days', 'Established')} days",
-            "how_to_stay_safe": ["Verified clean. Always keep standard two-factor authentication enabled."]
+            "what_was_detected": f"Benign {content_type} with no deceptive links or malicious payloads.",
+            "why_suspicious": "All embedded links, domain telemetry, and content structure appear consistent and clean.",
+            "how_affects_user": "No security or financial threat detected.",
+            "evidence": "GSB: Clean | VT: 0 Detections | Brand-Domain Check: Passed",
+            "how_to_stay_safe": ["Content appears safe. Continue practicing standard digital hygiene."]
         }
 
     return {
         "risk_score": score,
         "classification": tier,
-        "what_was_detected": f"Deceptive technical pattern uncovered inside {content_type}.",
-        "why_suspicious": " ".join(reasons) if reasons else "Subtle structural anomalies and unverified routing detected.",
-        "how_affects_user": "Designed to bypass surface inspection and trick users into authorizing payments or leaking sensitive credentials.",
-        "evidence": " | ".join(evidence) if evidence else f"Deep Forensic Anomaly Index: {score}/100",
+        "what_was_detected": f"Hidden threat uncovered beneath normal-looking {content_type}.",
+        "why_suspicious": " ".join(reasons) if reasons else "Technical anomalies detected in routing or domain structure.",
+        "how_affects_user": "A user trusting the normal tone of this message could be tricked into handing over login credentials or financial access.",
+        "evidence": " | ".join(evidence) if evidence else f"Forensic Anomaly Score: {score}/100",
         "how_to_stay_safe": [
-            "Do not open embedded links or authorize any payment/login requests.",
-            "Independently contact the organization through their official app or helpline."
+            "Ignore the polite/normal tone and do not click the attached link.",
+            "Visit the official website manually by typing its known address in your browser."
         ]
     }
 
@@ -144,28 +175,33 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
         return RESULT_CACHE[cache_key]
 
     prompt = f"""
-    You are a Principal Threat Intelligence & Digital Forensics Investigator for 'ScamSense'.
-    Your job is to look PAST polite or genuine-looking surface text/URLs and uncover hidden technical or psychological payloads.
+    You are a Principal Digital Forensics & Anti-Phishing Architect for 'ScamSense'.
+    CRITICAL RULE: Modern phishing messages, emails, and websites DO NOT use urgent or threatening words. They look completely normal, polite, and routine while hiding a malicious link or payload inside!
 
     Module Type: {content_type}
-    Live Technical Forensics & Threat Intel: {json.dumps(extra_intel) if extra_intel else 'None'}
+    Extracted Live URL Forensics, Redirect Chains, Domain Age, Google Safe Browsing & VirusTotal Telemetry:
+    {json.dumps(extra_intel) if extra_intel else 'None'}
 
-    DEEP FORENSIC ANALYSIS INSTRUCTIONS:
-    1. DO NOT rely on simple keyword matching. Many advanced phishing emails, SMS, and websites use calm, polite, professional language.
-    2. Check for ENTITY-DOMAIN MISMATCH: Does the text/email/image claim to be from a known bank, courier, government agency, or brand while linking to an unrelated domain, URL shortener, or personal email?
-    3. Check TECHNICAL TELEMETRY: Inspect `domain_age_days` (newly registered domains ,
+    STRICT 3-TIER CLASSIFICATION:
+    - 0 to 30: "SAFE"
+    - 31 to 60: "SUSPICIOUS"
+    - 61 to 100: "HIGH RISK"
+
+    Return ONLY a valid JSON object with this exact schema:
+    {{
+        "risk_score": <integer 0-100>,
         "classification": "<SAFE | SUSPICIOUS | HIGH RISK>",
-        "what_was_detected": "<1-2 crisp sentences identifying the exact surface claim vs actual underlying target/payload>",
-        "why_suspicious": "",
-        "how_affects_user": "<1-2 sentences detailing the exact consequence to the user's finances, credentials, or device>",
-        "evidence": "<Concrete technical proof: exact domain age, SSL issuer, redirect destination, mismatched domain, or GSB/VT telemetry>",
+        "what_was_detected": "<1-2 crisp sentences stating what the surface message/URL claims vs what the actual underlying link/payload is>",
+        "why_suspicious": "<1-2 sentences explaining the exact forensic proof or why it is verified safe>",
+        "how_affects_user": "<1-2 sentences explaining the real-world consequence to the user>",
+        "evidence": "<Exact technical proof: claimed brand vs actual domain, domain age, SSL issuer, redirect URL, or GSB/VT hits>",
         "how_to_stay_safe": [
             "<Specific actionable step 1>",
             "<Specific actionable step 2>"
         ]
     }}
 
-    User Input to Deep-Scan: {text_data}
+    Input to Deep-Scan: {text_data}
     """
 
     contents = [prompt]
@@ -182,11 +218,11 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
                 model=model_name,
                 contents=contents,
                 config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.0
-                )
-            )
-            parsed = json.loads(response.text)
+response_mime_type="application/json",
+temperature=0.0
+)
+)
+parsed = json.loads(response.text)
 score = int(parsed.get("risk_score", 0))
 parsed["risk_score"] = score
 parsed["classification"] = get_3_tier_level(score)
