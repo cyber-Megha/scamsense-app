@@ -1,3 +1,4 @@
+html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -52,7 +53,7 @@
             <div class="float-card">
                 <div class="card-3d-content">
                     <div class="card-head"><h2>01 // URL SCANNER</h2><span>🌐</span></div>
-                    <p class="card-desc">Trace phishing domains & malicious redirects.</p>
+                    <p class="card-desc">Trace phishing domains, typosquatting & malicious redirects.</p>
                     <input type="text" id="urlInput" class="cyber-input" placeholder="https://suspicious-target.com">
                 </div>
                 <button class="cyber-btn card-3d-content" onclick="scanURL()">SCAN TARGET URL</button>
@@ -105,12 +106,12 @@
         </div>
     </main>
 
-    <!-- DYNAMIC POPUP LOCK-SHIELD & CINEMATIC VERDICT MODAL -->
+    <!-- DYNAMIC POPUP LOCK-SHIELD & FORENSIC VERDICT MODAL -->
     <div id="scanPopupOverlay" class="popup-overlay hidden">
         <div class="popup-container">
             <button class="close-popup-btn" onclick="closePopup()">✕ CLOSE</button>
 
-            <!-- STAGE 1: SPINNING CYAN RINGS + SHIELD WITH LOCK (UNLOCKS ON VERDICT) -->
+            <!-- STAGE 1: SPINNING CYAN RINGS + SHIELD WITH LOCK -->
             <div id="shieldSpinnerStage" class="shield-stage">
                 <div class="holo-shield-wrap">
                     <div class="shield-ring-outer"></div>
@@ -128,28 +129,42 @@
                     </div>
                 </div>
                 <p id="scanningModuleLabel" class="scanning-pulse-text">DECRYPTING PAYLOAD...</p>
-                <div id="unlockBigBanner" class="unlock-float-text hidden">RISKY</div>
+                <div id="unlockBigBanner" class="unlock-float-text hidden">HIGH RISK</div>
             </div>
 
-            <!-- STAGE 2: VERDICT BADGE (BLINKS 2s THEN MOVES UP) + DETAILS -->
+            <!-- STAGE 2: 3-TIER VERDICT BADGE + DETAILED FORENSIC REPORT -->
             <div id="verdictRevealStage" class="verdict-stage hidden">
                 <div id="verdictHeroBox" class="verdict-hero">
-                    <span id="verdictStatusText" class="verdict-word">RISKY</span>
+                    <span id="verdictStatusText" class="verdict-word">HIGH RISK</span>
                     <span id="verdictPercentText" class="verdict-percent">95%</span>
                 </div>
 
                 <!-- REVEALS AFTER 2 SECONDS BLINK -->
                 <div id="verdictDetailsPanel" class="details-panel hidden">
                     <div id="decodedQrBanner" class="qr-banner hidden"></div>
+
+                    <div class="forensic-grid">
+                        <div class="forensic-item">
+                            <span class="f-label">🔍 WHAT WAS DETECTED:</span>
+                            <p id="fDetected" class="f-text"></p>
+                        </div>
+                        <div class="forensic-item">
+                            <span class="f-label">⚖️ WHY IT IS SUSPICIOUS / SAFE:</span>
+                            <p id="fWhy" class="f-text"></p>
+                        </div>
+                        <div class="forensic-item">
+                            <span class="f-label">⚡ HOW IT AFFECTS THE USER:</span>
+                            <p id="fImpact" class="f-text"></p>
+                        </div>
+                        <div class="forensic-item evidence-box">
+                            <span class="f-label">🧾 TECHNICAL EVIDENCE:</span>
+                            <p id="fEvidence" class="f-evidence-text"></p>
+                        </div>
+                    </div>
                     
                     <div class="action-green-box">
-                        <div class="box-title-green">🛡️ WHAT YOU SHOULD DO NOW:</div>
+                        <div class="box-title-green">🛡️ RECOMMENDED ACTION:</div>
                         <div id="liveActionText" class="live-typing-green"></div>
-                    </div>
-
-                    <div class="alert-footer-box">
-                        <span id="alertTagBadge" class="alert-pill">ALERT</span>
-                        <span id="shortReasonText" class="short-reason"></span>
                     </div>
                 </div>
             </div>
