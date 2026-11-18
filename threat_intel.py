@@ -13,20 +13,37 @@ GSB_API_KEY = os.getenv("GEMINI_API_KEY")
 def inspect_url_forensics(raw_url: str):
     target = raw_url.strip()
     if not target.startswith(("http://", "https://")):
-        target = "https://" + target
+        target = "http://" + target
 
     parsed = urlparse(target)
-    domain = parsed.netloc.partition(":")[0].lower()
+    domain = parsed.netloc.partition(":").lower()
+    full_path = (parsed.path + "?" + parsed.query).lower()
     parts = domain.split(".")
     root_domain = f"{parts[-2]}.{parts[-1]}" if len(parts) >= 2 else domain
+
+    # URL Path-এর ভেতরে লুকানো ফেক ডোমেইন বা ব্র্যান্ড নাম খোঁজা (যেমন: /://skype.com)
+    embedded_domains_in_path = re.findall(r'[a-z0-9-]+\.(?:com|net|org|in|co|io|gov|bank|sbi)\b', full_path)
+    spoofed_path_domains = [d for d in embedded_domains_in_path if d != root_domain and d != domain]
+
+    # র‍্যান্ডম ৩২+ অক্ষরের হেক্স হ্যাশ স্ট্রিং খোঁজা (যেমন: 70ffb52d079109dca5664cce6f317373782)
+    has_random_hex_folder = bool(re.search(r'/[a-f0-9]{24,}/', full_path))
+
+    # ফিশিং কিট ডিরেক্টরি খোঁজা (cgi-bin, verification, webscr, wp-admin, etc.)
+    suspicious_paths = [p for p in ["cgi-bin", "verification", "verify", "login", "signin", "webscr", "update", "secure", "account", "banking", "confirm"] if p in full_path]
 
     forensics = {
         "original_url": raw_url,
         "normalized_url": target,
         "domain": domain,
+        "root_domain": root_domain,
+        "path": parsed.path,
+        "url_length": len(raw_url),
         "subdomain_count": max(0, len(parts) - 2),
         "has_punycode": "xn--" in domain,
         "uses_ip": bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain)),
+        "spoofed_domains_in_path": spoofed_path_domains,
+        "has_random_hex_folder": has_random_hex_folder,
+        "suspicious_path_keywords": suspicious_paths,
         "is_shortener": any(s in domain for s in ["bit.ly", "tinyurl.com", "t.co", "rb.gy", "is.gd", "cutt.ly", "shorturl.at", "ow.ly"]),
         "redirect_chain": [],
         "final_destination": target,
@@ -44,13 +61,12 @@ def inspect_url_forensics(raw_url: str):
         forensics["dns_resolved"] = False
 
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ScamSense-ForensicBot/3.0"}
-        resp = requests.get(target, headers=headers, timeout=6, allow_redirects=True)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ScamSense-ForensicBot/3.5"}
+        resp = requests.get(target, headers=headers, timeout=5, allow_redirects=True)
         forensics["redirect_chain"] = [r.url for r in resp.history] + [resp.url]
         forensics["final_destination"] = resp.url
-        forensics["http_status"] = resp.status_code
     except Exception as e:
-        forensics["connection_note"] = f"Probe blocked or unreachable: {str(e)[:70]}"
+        forensics["connection_note"] = f"Offline or dead phishing host: {str(e)[:60]}"
 
     try:
         rdap_res = requests.get(f"https://rdap.org{root_domain}", timeout=4)
@@ -86,7 +102,7 @@ def check_google_safe_browsing(url: str):
     try:
         endpoint = f"https://googleapis.com{GSB_API_KEY}"
         payload = {
-            "client": {"clientId": "scamsense-app", "clientVersion": "3.0"},
+            "client": {"clientId": "scamsense-app", "clientVersion": "3.5"},
             "threatInfo": {
                 "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
                 "platformTypes": ["ANY_PLATFORM"],
