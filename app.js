@@ -1,3 +1,4 @@
+javascript
 // 1. 5-Second Hollywood Hacker Decryption Intro Controller
 const statusMessages = [
     "BYPASSING PROXY PROTOCOLS...",
@@ -82,7 +83,7 @@ document.querySelectorAll(".float-card").forEach(card => {
     });
 });
 
-// 4. Popup Lock-Shield & Cinematic Verdict Controller
+// 4. 3-Tier Forensic Verdict Controller
 let typingTimer = null;
 
 function closePopup() {
@@ -96,14 +97,9 @@ function setScanning(moduleName) {
     const overlay = document.getElementById("scanPopupOverlay");
     if (overlay) overlay.classList.remove("hidden");
 
-    const spinnerStage = document.getElementById("shieldSpinnerStage");
-    if (spinnerStage) spinnerStage.classList.remove("hidden");
-
-    const revealStage = document.getElementById("verdictRevealStage");
-    if (revealStage) revealStage.classList.add("hidden");
-
-    const detailsPanel = document.getElementById("verdictDetailsPanel");
-    if (detailsPanel) detailsPanel.classList.add("hidden");
+    document.getElementById("shieldSpinnerStage").classList.remove("hidden");
+    document.getElementById("verdictRevealStage").classList.add("hidden");
+    document.getElementById("verdictDetailsPanel").classList.add("hidden");
 
     const shackle = document.getElementById("lockShacklePath");
     if (shackle) shackle.classList.remove("unlocked");
@@ -114,7 +110,7 @@ function setScanning(moduleName) {
     const scanLabel = document.getElementById("scanningModuleLabel");
     if (scanLabel) {
         scanLabel.classList.remove("hidden");
-        scanLabel.innerText = `SCANNING ${moduleName} PAYLOAD...`;
+        scanLabel.innerText = `FORENSIC SCANNING ${moduleName}...`;
     }
 }
 
@@ -130,7 +126,7 @@ function typeGreenText(element, fullText) {
         } else {
             clearInterval(typingTimer);
         }
-    }, 65);
+    }, 55);
 }
 
 function showResult(res) {
@@ -141,10 +137,27 @@ function showResult(res) {
     }
 
     const d = res.data || {};
-    const score = d.risk_score || 0;
-    const isRisky = score >= 40;
+    const score = Number(d.risk_score || 0);
 
-    // Step A: Unlock the shield padlock & float big RISKY/SAFE text
+    // 3-Tier Classification Logic: 0-30 SAFE, 31-60 SUSPICIOUS, 61-100 HIGH RISK
+    let tierLabel = "SAFE";
+    let shapeClass = "shape-safe";
+    let bannerText = "✅ SAFE";
+    let bannerColor = "#00f3ff";
+
+    if (score >= 61) {
+        tierLabel = "HIGH RISK";
+        shapeClass = "shape-high-risk";
+        bannerText = "🚨 HIGH RISK";
+        bannerColor = "#ff1e56";
+    } else if (score >= 31) {
+        tierLabel = "SUSPICIOUS";
+        shapeClass = "shape-suspicious";
+        bannerText = "⚠️ SUSPICIOUS";
+        bannerColor = "#fbbf24";
+    }
+
+    // Step A: Unlock the shield padlock
     const shackle = document.getElementById("lockShacklePath");
     if (shackle) shackle.classList.add("unlocked");
 
@@ -154,34 +167,25 @@ function showResult(res) {
     const unlockBanner = document.getElementById("unlockBigBanner");
     if (unlockBanner) {
         unlockBanner.classList.remove("hidden");
-        unlockBanner.innerText = isRisky ? "⚠️ RISKY" : "✅ SAFE";
-        unlockBanner.style.color = isRisky ? "#ff1e56" : "#00f3ff";
-        unlockBanner.style.textShadow = isRisky ? "0 0 25px #ff1e56" : "0 0 25px #00f3ff";
+        unlockBanner.innerText = bannerText;
+        unlockBanner.style.color = bannerColor;
+        unlockBanner.style.textShadow = `0 0 25px ${bannerColor}`;
     }
 
-    // Step B: Transition to blinking verdict shape
+    // Step B: Transition to 2-second blinking verdict shape
     setTimeout(() => {
-        const spinnerStage = document.getElementById("shieldSpinnerStage");
-        if (spinnerStage) spinnerStage.classList.add("hidden");
-
-        const revealStage = document.getElementById("verdictRevealStage");
-        if (revealStage) revealStage.classList.remove("hidden");
+        document.getElementById("shieldSpinnerStage").classList.add("hidden");
+        document.getElementById("verdictRevealStage").classList.remove("hidden");
 
         const heroBox = document.getElementById("verdictHeroBox");
         const statusText = document.getElementById("verdictStatusText");
         const percentText = document.getElementById("verdictPercentText");
 
-        if (heroBox) heroBox.className = "verdict-hero blink-2s " + (isRisky ? "shape-risky" : "shape-safe");
-        if (statusText) statusText.innerText = isRisky ? "RISKY" : "SAFE";
-        if (percentText) percentText.innerText = `${score}% ${isRisky ? "RISK" : "SAFE"}`;
+        heroBox.className = `verdict-hero blink-2s ${shapeClass}`;
+        statusText.innerText = tierLabel;
+        percentText.innerText = `${score}% RISK SCORE`;
 
-        const actionsList = (d.how_to_stay_safe || []).join(" ");
-        const reasonsList = (d.why_risky || []).slice(0, 2).join(" ");
-
-        const alertPill = document.getElementById("alertTagBadge");
-        const shortReasonEl = document.getElementById("shortReasonText");
         const qrBanner = document.getElementById("decodedQrBanner");
-
         if (qrBanner) {
             if (res.decoded_qr) {
                 qrBanner.classList.remove("hidden");
@@ -191,29 +195,22 @@ function showResult(res) {
             }
         }
 
-        if (alertPill && shortReasonEl) {
-            if (isRisky) {
-                alertPill.innerText = "ALERT";
-                alertPill.className = "alert-pill pill-danger";
-                shortReasonEl.innerText = reasonsList || "High probability of phishing, financial loss, or malware infection.";
-            } else {
-                alertPill.innerText = "VERIFIED";
-                alertPill.className = "alert-pill pill-safe";
-                shortReasonEl.innerText = reasonsList || "No malicious signatures or phishing threats detected in this target.";
-            }
-        }
+        // Populate 4 Module-Specific Forensic Sections
+        document.getElementById("fDetected").textContent = d.what_was_detected || "Target payload analyzed.";
+        document.getElementById("fWhy").textContent = d.why_suspicious || "Evaluated domain structure and threat intelligence.";
+        document.getElementById("fImpact").textContent = d.how_affects_user || "Standard security precautions apply.";
+        document.getElementById("fEvidence").textContent = d.evidence || `Risk Index: ${score}/100`;
 
-        // Step C: After 2 seconds blink, dock verdict to top & type clean spaced green advice
+        const actionsList = (d.how_to_stay_safe || []).join(" ");
+
+        // Step C: After 2 seconds blink, dock verdict to top & reveal 4-point forensic breakdown
         setTimeout(() => {
-            if (heroBox) {
-                heroBox.classList.remove("blink-2s");
-                heroBox.classList.add("docked-top");
-            }
-            const detailsPanel = document.getElementById("verdictDetailsPanel");
-            if (detailsPanel) detailsPanel.classList.remove("hidden");
-            typeGreenText(document.getElementById("liveActionText"), actionsList || "Proceed safely, but always keep security awareness active.");
+            heroBox.classList.remove("blink-2s");
+            heroBox.classList.add("docked-top");
+            document.getElementById("verdictDetailsPanel").classList.remove("hidden");
+            typeGreenText(document.getElementById("liveActionText"), actionsList || "Maintain standard cybersecurity precautions.");
         }, 2000);
-    }, 1100);
+    }, 1000);
 }
 
 async function sendReq(endpoint, formData, name) {
@@ -233,8 +230,9 @@ async function sendReq(endpoint, formData, name) {
 }
 
 function scanURL() { const v = document.getElementById("urlInput").value.trim(); if (!v) return alert("Enter a URL!"); const fd = new FormData(); fd.append("url", v); sendReq("/url", fd, "URL"); }
-function scanQR() { const f = document.getElementById("qrInput").files[0]; if (!f) return alert("Upload a QR image!"); const fd = new FormData(); fd.append("file", f); sendReq("/qr", fd, "QR"); }
+function scanQR() { const f = document.getElementById("qrInput").files; if (!f) return alert("Upload a QR image!"); const fd = new FormData(); fd.append("file", f); sendReq("/qr", fd, "QR"); }
 function scanEmail() { const s = document.getElementById("emailSender").value.trim(); const b = document.getElementById("emailBody").value.trim(); if (!b) return alert("Paste email content!"); const fd = new FormData(); fd.append("sender", s); fd.append("body", b); sendReq("/email", fd, "EMAIL"); }
 function scanMessage() { const m = document.getElementById("msgInput").value.trim(); if (!m) return alert("Paste message!"); const fd = new FormData(); fd.append("message", m); sendReq("/message", fd, "MESSAGE"); }
-function scanDocument() { const f = document.getElementById("docInput").files[0]; if (!f) return alert("Upload PDF/TXT!"); const fd = new FormData(); fd.append("file", f); sendReq("/document", fd, "DOCUMENT"); }
-function scanImage() { const f = document.getElementById("imgInput").files[0]; if (!f) return alert("Upload an image!"); const fd = new FormData(); fd.append("file", f); sendReq("/image", fd, "IMAGE"); }
+function scanDocument() { const f = document.getElementById("docInput").files; if (!f) return alert("Upload PDF/TXT!"); const fd = new FormData(); fd.append("file", f); sendReq("/document", fd, "DOCUMENT"); }
+function scanImage() { const f = document.getElementById("imgInput").files; if (!f) return alert("Upload an image!"); const fd = new FormData(); fd.append("file", f); sendReq("/image", fd, "IMAGE"); }
+```
