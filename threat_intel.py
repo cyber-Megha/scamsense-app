@@ -13,7 +13,7 @@ def inspect_url_forensics(raw_url: str):
         target = "http://" + target
 
     parsed = urlparse(target)
-    domain = parsed.netloc.split(":").lower()
+    domain = parsed.netloc.partition(":").lower()
     full_path = (parsed.path + "?" + parsed.query).lower()
     parts = domain.split(".")
     root_domain = f"{parts[-2]}.{parts[-1]}" if len(parts) >= 2 else domain
@@ -57,8 +57,9 @@ def check_google_safe_browsing(url: str):
         res = requests.post(endpoint, json=payload, timeout=4)
         if res.status_code == 200:
             matches = res.json().get("matches", [])
-            if len(matches) > 0:
-                return {"is_dangerous": True, "threat_type": matches.get("threatType", "MALICIOUS")}
+            first_match = next(iter(matches), None)
+            if first_match:
+                return {"is_dangerous": True, "threat_type": first_match.get("threatType", "MALICIOUS")}
         return {"is_dangerous": False}
     except Exception:
         return {"is_dangerous": False}
