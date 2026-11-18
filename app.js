@@ -1,4 +1,3 @@
-javascript
 // 1. 5-Second Hollywood Hacker Decryption Intro Controller
 const statusMessages = [
     "BYPASSING PROXY PROTOCOLS...",
@@ -235,4 +234,3 @@ function scanEmail() { const s = document.getElementById("emailSender").value.tr
 function scanMessage() { const m = document.getElementById("msgInput").value.trim(); if (!m) return alert("Paste message!"); const fd = new FormData(); fd.append("message", m); sendReq("/message", fd, "MESSAGE"); }
 function scanDocument() { const f = document.getElementById("docInput").files; if (!f) return alert("Upload PDF/TXT!"); const fd = new FormData(); fd.append("file", f); sendReq("/document", fd, "DOCUMENT"); }
 function scanImage() { const f = document.getElementById("imgInput").files; if (!f) return alert("Upload an image!"); const fd = new FormData(); fd.append("file", f); sendReq("/image", fd, "IMAGE"); }
-```
