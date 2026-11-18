@@ -65,7 +65,7 @@ def deep_forensic_fallback(content_type: str, text_data: str, extra_intel: dict)
     if "deep_url_forensics" in intel:
         url_reports.append(intel)
     elif intel.get("embedded_urls_intel"):
-        url_reports.extend(intel["embedded_urls_intel"])
+        url_reports.extend(intel.get("embedded_urls_intel", []))
 
     score = 5
     reasons = []
@@ -126,8 +126,9 @@ def deep_forensic_fallback(content_type: str, text_data: str, extra_intel: dict)
                 evidence.append(f"Claimed Brand: {b.upper()} | Actual Domain: {final_dom}")
                 break
 
-    if content_type == "Website URL" and url_reports:
-        uf = url_reports[0].get("deep_url_forensics", {})
+    first_rep = next(iter(url_reports), None)
+    if content_type == "Website URL" and first_rep:
+        uf = first_rep.get("deep_url_forensics", {})
         dom = uf.get("domain", "")
         for b in OFFICIAL_BRAND_MAP:
             if is_official_domain_for_brand(b, dom):
@@ -217,7 +218,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
             response = client.models.generate_content(
                 model=model_name,
                 contents=contents,
-                config=types.GenerateContentConfig(
+config=types.GenerateContentConfig(
 response_mime_type="application/json",
 temperature=0.0
 )
