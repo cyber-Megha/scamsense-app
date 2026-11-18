@@ -223,14 +223,15 @@ response_mime_type="application/json",
 temperature=0.0
 )
 )
-parsed = json.loads(response.text)
-score = int(parsed.get("risk_score", 0))
-parsed["risk_score"] = score
-parsed["classification"] = get_3_tier_level(score)
-RESULT_CACHE[cache_key] = parsed
-return parsed
-except Exception:
-continue
+            parsed = json.loads(response.text)
+            score = int(parsed.get("risk_score", 0))
+            parsed["risk_score"] = score
+            parsed["classification"] = get_3_tier_level(score)
+            RESULT_CACHE[cache_key] = parsed
+            return parsed
+        except Exception:
+            continue
+
 fallback_res = deep_forensic_fallback(content_type, text_data, extra_intel)
 RESULT_CACHE[cache_key] = fallback_res
 return fallback_res
