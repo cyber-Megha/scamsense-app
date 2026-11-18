@@ -36,12 +36,12 @@ def call_groq_ai(prompt: str):
                 "temperature": 0.0,
                 "response_format": {"type": "json_object"}
             },
-            timeout=12
+            timeout=14
         )
         if r.status_code == 200:
-            content = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-            if content:
-                return parse_ai_json(content)
+            first_choice = next(iter(r.json().get("choices", [])), {})
+            content = first_choice.get("message", {}).get("content", "")
+            if content: return parse_ai_json(content)
     except Exception: pass
     return None
 
@@ -53,12 +53,12 @@ def call_openrouter_ai(prompt: str):
                 "https://openrouter.ai",
                 headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
                 json={"model": model_id, "messages": [{"role": "user", "content": prompt}], "temperature": 0.0},
-                timeout=14
+                timeout=15
             )
             if r.status_code == 200:
-                content = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-                if content:
-                    return parse_ai_json(content)
+                first_choice = next(iter(r.json().get("choices", [])), {})
+                content = first_choice.get("message", {}).get("content", "")
+                if content: return parse_ai_json(content)
         except Exception: continue
     return None
 
@@ -74,40 +74,41 @@ def call_gemini_ai(contents: list):
         except Exception: continue
     return None
 
-def emergency_fallback(content_type: str, text_data: str, extra_intel: dict):
+def backup_content_analyzer(content_type: str, text_data: str, extra_intel: dict):
     intel = extra_intel or {}
     rep = intel if "deep_url_forensics" in intel else next(iter(intel.get("embedded_urls_intel") or []), {})
     gsb = rep.get("google_safe_browsing", {}).get("is_dangerous", False)
     vt = rep.get("virustotal", {}).get("malicious", 0)
     uh = rep.get("urlhaus_threat_feed", {}).get("listed", False)
     uf = rep.get("deep_url_forensics", {})
-    dom = uf.get("domain", "Target Payload")
+    page = uf.get("live_page_content", {})
+    dom = uf.get("domain", "Target")
 
     if gsb or vt > 0 or uh:
         return {
             "risk_score": 96, "classification": "HIGH RISK",
-            "what_was_detected": f"Active malicious infrastructure identified at '{dom}' with confirmed threat signatures.",
-            "why_suspicious": "The destination is actively flagged across global threat feeds for credential harvesting, phishing, or malware distribution.",
-            "how_affects_user": "Interacting with this target exposes user credentials, banking sessions, and device integrity to immediate compromise.",
-            "evidence": f"Host: {dom} | Protocol: {uf.get('protocol', 'N/A')} | SSL: {uf.get('ssl_status', 'Unverified')} | Threat Feed Match: Confirmed",
-            "how_to_stay_safe": ["Terminate access immediately and never enter passwords, OTPs, or financial details."]
+            "what_was_detected": f"Confirmed malicious target identified at '{dom}'.",
+            "why_suspicious": "Actively flagged by global threat intelligence feeds for phishing or malware.",
+            "how_affects_user": "Direct risk of credential theft, financial loss, or device compromise.",
+            "evidence": f"Host: {dom} | Protocol: {uf.get('protocol', 'N/A')} | Threat Feed: Confirmed",
+            "how_to_stay_safe": ["Close immediately and do not enter any personal or financial details."]
         }
 
-    is_risky = (
-        any(dom.endswith(e) for e in (".cfd", ".sbs", ".icu", ".it.com", ".xyz", ".top", ".tk", ".click", ".cyou", ".bond"))
-        or uf.get("has_at_symbol_trap")
-        or bool(uf.get("spoofed_domains_in_path"))
-        or ("familly" in dom or "paypa1" in dom or "arnazon" in dom or dom.count("-") >= 2)
-    )
-    score = 86 if is_risky else (45 if uf.get("protocol") == "HTTP" else 14)
+    score = 15
+    if page.get("asks_password_or_pin") and page.get("external_form_targets"): score = 88
+    elif uf.get("has_at_symbol_trap"): score = 85
+    elif uf.get("protocol") == "HTTP": score = 45
+    elif page.get("visible_text_sample"): score = 18
+    else: score = 42
+
     tier = get_tier(score)
     return {
         "risk_score": score, "classification": tier,
-        "what_was_detected": f"Deep structural inspection completed for {content_type} ({dom}).",
-        "why_suspicious": "High-abuse domain pattern, typosquatting spelling anomaly, or multi-hyphen phishing structure detected." if tier == "HIGH RISK" else ("Unencrypted HTTP transmission or unverified host posture requires caution." if tier == "SUSPICIOUS" else "Domain infrastructure, encryption certificate, and routing telemetry show clean legitimate behavior."),
-        "how_affects_user": "Safe for standard browsing and legitimate access." if tier == "SAFE" else "Users risk credential interception, identity spoofing, or unauthorized data harvesting.",
-        "evidence": f"Domain: {dom} | Protocol: {uf.get('protocol', 'Checked')} | SSL: {uf.get('ssl_status', 'Checked')} | Entropy: {uf.get('shannon_entropy', 'Normal')}",
-        "how_to_stay_safe": ["Proceed safely while maintaining standard security hygiene." if tier == "SAFE" else "Do not submit login credentials or personal data; verify via the official HTTPS portal."]
+        "what_was_detected": f"Analyzed {content_type} ({dom}) — Title: '{page.get('page_title') or 'N/A'}'.",
+        "why_suspicious": "Evaluated live page structure, form destinations, and domain consistency.",
+        "how_affects_user": "Safe for normal viewing." if tier == "SAFE" else "Exercise caution before sharing credentials or sensitive data.",
+        "evidence": f"Domain: {dom} | SSL: {uf.get('ssl_status', 'Checked')} | Password Form: {page.get('asks_password_or_pin', False)}",
+        "how_to_stay_safe": ["Proceed safely." if tier == "SAFE" else "Verify the source before entering any sensitive information."]
     }
 
 def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = None, extra_intel: dict = None):
@@ -116,25 +117,28 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
 
     intel = extra_intel or {}
     prompt = f"""
-    You are a Principal Digital Forensics & Anti-Phishing Investigator for 'ScamSense'.
-    Perform a thorough, crystal-clear, and deeply informative forensic evaluation of this {content_type} using the technical telemetry below.
-    Do NOT mention any AI model names, API names, or internal tool names in your output. Present the findings purely as authoritative forensic conclusions.
+    You are an elite, independent Senior Cybersecurity & Digital Forensics Investigator for 'ScamSense'.
+    Do NOT make superficial judgments based solely on whether a domain is unfamiliar, uses HTTPS, or has a non-standard TLD.
+    Instead, think deeply like a human forensic investigator by examining the ACTUAL LIVE CONTENT, INTENT, AND CONTEXT provided in the telemetry below:
 
-    Telemetry Data: {json.dumps(intel)}
+    Input Type: {content_type}
+    Live Extracted Content & Technical Telemetry: {json.dumps(intel)}
 
-    STRICT EVALUATION RULES:
-    - Inspect domain spelling for subtle typosquatting (e.g., 'familly' instead of 'family', 'arnazon', 'paypa1'), multi-hyphen lure domains (e.g., 'prime-familly-assistance.com'), '/index.php' phishing kit endpoints, disposable TLDs (.cfd, .sbs, .icu, .it.com, .xyz, .top), brand-domain mismatches, '@' traps, path spoofing, missing DNS MX/SPF records, and polite scam texts hiding unofficial links — score these HIGH RISK (78-98%).
-    - Verified official domains (google.com, hdfcbank.com, salik.ltd, etc.) with valid encryption and clean telemetry MUST be scored SAFE (1-22%).
-    - Strict Tiers: 0-30="SAFE", 31-60="SUSPICIOUS", 61-100="HIGH RISK".
+    HOW TO REASON INTELLIGENTLY:
+    1. READ THE ACTUAL CONTENT (`live_page_content`, email body, message text, or image): What is this page or message actually doing?
+       - If it is a genuine informational site, legitimate business/government portal (e.g., Salik toll service), personal blog, or benign document with no deception or credential harvesting -> classify as SAFE (1-28%), even if the TLD is uncommon.
+       - If the content pretends to be a bank, courier, government agency, or brand, uses subtle spelling tricks (e.g., 'familly'), hosts a login/credential form on an unrelated domain or public cloud storage bucket, sends form data to an external server, or embeds a deceptive link inside a polite message -> classify as HIGH RISK (75-98%).
+       - If the page blocks inspection, lacks clear identity while asking for user interaction, or shows ambiguous anomalies without confirmed malice -> classify as SUSPICIOUS (35-60%).
+    2. Never mention any AI model names, API names, or internal tools.
 
-    Return ONLY a valid JSON object with thorough, well-explained, easy-to-understand forensic points:
+    Return ONLY a valid JSON object:
     {{
         "risk_score": <integer 0-100>,
         "classification": "<SAFE | SUSPICIOUS | HIGH RISK>",
-        "what_was_detected": "",
-        "why_suspicious": "<2-3 detailed sentences explaining the exact technical or behavioral proof why it is dangerous, suspicious, or verified safe>",
-        "how_affects_user": "<2 clear sentences explaining the direct real-world impact on the user's security, privacy, or finances>",
-        "evidence": "<Clean, specific technical proof citing exact domain flags, protocol, SSL status, routing behavior, or structural anomalies>",
+        "what_was_detected": "<2 clear sentences describing what the target actually is and what its live content/text does>",
+        "why_suspicious": "<2-3 detailed sentences explaining the exact behavioral and technical reasoning behind your verdict>",
+        "how_affects_user": "<2 clear sentences explaining the real-world impact on the user>",
+        "evidence": "<Specific proof from the live page content, domain structure, SSL, or routing telemetry>",
         "how_to_stay_safe": ["<Clear actionable step 1>", "<Clear actionable step 2>"]
     }}
     User Input: {text_data}
@@ -150,4 +154,4 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
         RESULT_CACHE[cache_key] = ai_output
         return ai_output
 
-    return emergency_fallback(content_type, text_data, extra_intel)
+    return backup_content_analyzer(content_type, text_data, extra_intel)
