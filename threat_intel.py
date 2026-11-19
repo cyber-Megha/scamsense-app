@@ -63,7 +63,7 @@ def inspect_oauth_and_params(target_url: str, host: str) -> dict:
 
     is_oauth = any(k in lower_url for k in ("/oauth2/", "/authorize", "client_id=", "response_type="))
     redirect_targets = []
-    for key in ("redirect_uri", "redirect_url", "next", "url", "dest", "destination", "return_to", "continue"):
+    for key in ("redirect_uri", "redirect_url", "next", "url", "dest", "destination", "return_to", "continue", "r", "target"):
         for val in qs.get(key, []):
             redirect_targets.append(unquote(val))
 
@@ -71,11 +71,11 @@ def inspect_oauth_and_params(target_url: str, host: str) -> dict:
     for rt in redirect_targets:
         rt_host = (urlparse(rt).hostname or "").lower()
         if rt_host and host and not rt_host.endswith(host) and not host.endswith(rt_host):
-            external_redirects.append(rt[:150])
+            external_redirects.append(rt[:160])
 
     scopes_raw = " ".join(qs.get("scope", [])).lower()
     risky_scopes = [
-        s for s in ("mail.read", "mail.send", "files.read", "offline_access", "user.readwrite", "contacts.read")
+        s for s in ("mail.read", "mail.send", "files.read", "offline_access", "user.readwrite", "contacts.read", "mailboxsettings")
         if s in scopes_raw
     ]
 
@@ -137,7 +137,8 @@ def fetch_live_behaviour(target: str, root_dom: str) -> dict:
                 (r"unescape\s*\(", "unescape()"),
                 (r"fromCharCode", "String.fromCharCode"),
                 (r"atob\s*\(", "atob() base64 decode"),
-                (r"document\.write\s*\(", "document.write()"), (r"oncontextmenu\s*=\vert{}preventDefault\(\)", "context-menu/event block")
+                (r"document\.write\s*\(", "document.write()"),
+                (r"oncontextmenu\s*=|preventDefault\(\)", "context-menu/event block")
             ]
             for pat, label in obf_patterns:
                 if re.search(pat, script_blob, re.IGNORECASE):
@@ -278,8 +279,6 @@ def analyze_url_deep(url: str) -> dict:
         uh_res = f_uh.result()
         ssl_res = f_ssl.result()
 
-    oauth_info = inspect_oauth_and_params(target, host)
-
     heuristics = {
         "protocol": parsed.scheme.upper(),
         "domain": host,
@@ -287,4 +286,21 @@ def analyze_url_deep(url: str) -> dict:
         "is_ip_host": is_ip_address(host),
         "is_punycode": "xn--" in host,
         "subdomain_count": max(0, len(parts) - 2),
-        "has_at_trap": "@" in (parsed.netloc or
+        "has_at_trap": "@" in (parsed.netloc or ""),
+        "risky_tld": any(host.endswith(tld) for tld in RISKY_TLDS),
+        "free_or_cloud_host": any(h in host for h in SUSPICIOUS_HOSTS),
+        "url_entropy": calc_entropy(target),
+        "path_length": len(parsed.path or ""),
+        "ssl": ssl_res,
+        "oauth_analysis": inspect_oauth_and_params(target, host)
+    }
+
+    return {
+        "input_url": url,
+        "normalized_url": target,
+        "heuristics": heuristics,
+        "behaviour": behaviour,
+        "google_safe_browsing": gsb_res,
+        "virustotal": vt_res,
+        "urlhaus_threat_feed": uh_res
+    }
