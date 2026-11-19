@@ -51,6 +51,12 @@ URGENCY_WORDS = (
     "invoice", "legal notice", "aadhaar", "pan", "cpf", "cnpj", "ssn", "card",
     "confirm identity", "session expired", "sign in", "log in", "enter code"
 )
+COMMON_BENIGN_SUBDOMAINS = {
+    "www", "mail", "webmail", "login", "signin", "auth", "accounts", "account",
+    "admin", "portal", "api", "cdn", "static", "assets", "img", "images",
+    "media", "blog", "news", "shop", "store", "support", "help", "docs",
+    "dev", "staging", "test", "app", "m", "mobile", "cloud", "vpn", "sso"
+}
 
 def calc_entropy(s: str) -> float:
     if not s:
@@ -58,6 +64,27 @@ def calc_entropy(s: str) -> float:
     freq = {c: s.count(c) for c in set(s)}
     length = len(s)
     return round(-sum((n / length) * math.log2(n / length) for n in freq.values()), 2)
+
+def is_gibberish_label(label: str) -> bool:
+    """Detects random/gibberish host labels regardless of TLD (e.g., uidqaxan, x9k2m7p)."""
+    s = (label or "").strip().lower()
+    if len(s) < 6 or s in COMMON_BENIGN_SUBDOMAINS:
+        return False
+    # Ignore obvious all-digit IDs unless very long and mixed
+    alpha_only = re.sub(r"[^a-z]", "", s)
+    if len(alpha_only) < 5:
+        return False
+    vowels = sum(1 for c in alpha_only if c in "aeiou")
+    consonant_runs = len(re.findall(r"[bcdfghjklmnpqrstvwxyz]{4,}", alpha_only))
+    has_mixed_alnum = bool(re.search(r"[a-z]", s) and re.search(r"[0-9]", s)) and len(s) >= 7
+    low_vowel_ratio = vowels <= max(1, len(alpha_only) // 4)
+    high_label_entropy = calc_entropy(s) >= 2.75
+
+    return (
+        (high_label_entropy and low_vowel_ratio)
+        or consonant_runs >= 1
+        or (has_mixed_alnum and high_label_entropy)
+    )
 
 def is_ip_address(host: str) -> bool:
     try:
@@ -109,7 +136,6 @@ def get_ssl_info(domain: str, port: int = 443) -> dict:
     return info
 
 def inspect_wrapper_and_cloak(target_url: str, host: str) -> dict:
-    """Detects wrapped URLs, encoded nested targets, fragments, and wrapper/cloak tricks."""
     once = unquote(target_url or "")
     twice = unquote(once)
     parsed = urlparse(target_url)
@@ -125,7 +151,6 @@ def inspect_wrapper_and_cloak(target_url: str, host: str) -> dict:
             for candidate in (v, u1, u2):
                 if "http://" in candidate.lower() or "https://" in candidate.lower():
                     nested_urls.append(candidate[:160])
-                # Attempt Base64 decode if value looks like an encoded payload
                 cleaned_b64 = re.sub(r"[^A-Za-z0-9+/=_-]", "", candidate)
                 if len(cleaned_b64) >= 16:
                     try:
@@ -137,7 +162,6 @@ def inspect_wrapper_and_cloak(target_url: str, host: str) -> dict:
                     except Exception:
                         pass
 
-    # Also check URL embedded inside path or fragment (#)
     path_and_frag = f"{parsed.path or ''}#{parsed.fragment or ''}"
     for m in re.findall(r"https?://[^\s\"'<>]+", unquote(path_and_frag), flags=re.IGNORECASE):
         nested_urls.append(m[:160])
@@ -227,6 +251,9 @@ def inspect_path_and_deception(target_url: str, host: str, root_dom: str) -> dic
     has_double_dash_trick = "--" in host or "---" in path_str
     encoded_percent_count = len(re.findall(r"%[0-9a-fA-F]{2}", target_url))
 
+    path_segments = [seg for seg in path_str.split("/") if seg]
+    gibberish_path_segments = [seg for seg in path_segments if is_gibberish_label(seg)]
+
     return {
         "login_or_lure_tokens": lure_hits[:6],
         "is_ugc_or_profile_host": is_ugc_host,
@@ -235,7 +262,8 @@ def inspect_path_and_deception(target_url: str, host: str, root_dom: str) -> dic
         "lure_on_tunnel_or_cloud_host": bool(lure_hits and is_tunnel_or_cloud),
         "brand_mismatch_tokens": brand_hits[:5],
         "has_double_dash_trick": has_double_dash_trick,
-        "encoded_percent_count": encoded_percent_count
+        "encoded_percent_count": encoded_percent_count,
+        "gibberish_path_segments": gibberish_path_segments[:4]
     }
 
 def fetch_live_behaviour(target: str, root_dom: str) -> dict:
@@ -292,8 +320,11 @@ def fetch_live_behaviour(target: str, root_dom: str) -> dict:
             if meta_ref:
                 behaviour["meta_refresh_detected"] = True
 
-            lower_html = html_chunk.lower()
-            if any(w in lower_html for w in ("just a moment", "cf-browser-verification", "attention required", "access denied", "enable javascript")):
+            lower_all_check = f"{behaviour['title']} {html_chunk}".lower()
+            if any(w in lower_all_check for w in (
+                "just a moment", "cf-browser-verification", "attention required",
+                "access denied", "enable javascript", "checking your browser"
+            )):
                 behaviour["bot_blocked_or_evasive"] = True
 
             script_blob = "\n".join((s.get_text(" ") or "") for s in soup.find_all("script"))[:45000]
@@ -363,7 +394,7 @@ def check_gsb(urls: list) -> dict:
     try:
         endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GSB_API_KEY}"
         payload = {
-            "client": {"clientId": "scamsense-soc", "clientVersion": "8.0"},
+            "client": {"clientId": "scamsense-soc", "clientVersion": "9.0"},
             "threatInfo": {
                 "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
                 "platformTypes": ["ANY_PLATFORM"],
@@ -442,6 +473,9 @@ def analyze_url_deep(url: str) -> dict:
     parts = [p for p in host.split(".") if p]
     root_dom = f"{parts[-2]}.{parts[-1]}" if len(parts) >= 2 else host
 
+    subdomain_labels = parts[:-2] if len(parts) > 2 else []
+    gibberish_subs = [lbl for lbl in subdomain_labels if is_gibberish_label(lbl)]
+
     behaviour = fetch_live_behaviour(target, root_dom)
     final_u = behaviour.get("final_url") or target
 
@@ -465,7 +499,9 @@ def analyze_url_deep(url: str) -> dict:
         "domain_age": rdap_res,
         "is_ip_host": is_ip_address(host),
         "is_punycode": "xn--" in host,
-        "subdomain_count": max(0, len(parts) - 2),
+        "subdomain_count": len(subdomain_labels),
+        "gibberish_subdomains": gibberish_subs[:4],
+        "has_gibberish_subdomain": bool(gibberish_subs),
         "has_at_trap": "@" in (parsed.netloc or ""),
         "risky_tld": any(host.endswith(tld) for tld in RISKY_TLDS),
         "tunnel_or_cloud_host": any(h in host for h in TUNNEL_AND_CLOUD_HOSTS),
