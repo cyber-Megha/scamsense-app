@@ -541,3 +541,4 @@ def analyze_url_deep(url: str) -> dict:
         "google_safe_browsing": gsb_res,
         "virustotal": vt_res,
         "urlhaus_threat_
+    }
