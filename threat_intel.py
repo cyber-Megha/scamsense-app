@@ -13,12 +13,32 @@ from concurrent.futures import ThreadPoolExecutor
 VT_API_KEY = (os.getenv("VIRUSTOTAL_API_KEY") or "").strip()
 GSB_API_KEY = (os.getenv("SAFE_BROWSING_API_KEY") or os.getenv("GSB_API_KEY") or "").strip()
 
-RISKY_TLDS = (".tk", ".ml", ".ga", ".cf", ".gq", ".xyz", ".top", ".cfd", ".sbs", ".icu", ".click", ".link", ".work", ".zip", ".mov")
-SUSPICIOUS_HOSTS = ("ngrok", "trycloudflare", "pages.dev", "workers.dev", "supabase.co", "herokuapp.com", "000webhostapp.com")
+RISKY_TLDS = (
+    ".tk", ".ml", ".ga", ".cf", ".gq", ".xyz", ".top", ".cfd", ".sbs",
+    ".icu", ".click", ".link", ".work", ".zip", ".mov", ".rest", ".cam", ".live"
+)
+SUSPICIOUS_HOSTS = (
+    "ngrok", "trycloudflare", "pages.dev", "workers.dev", "supabase.co",
+    "herokuapp.com", "000webhostapp.com", "vercel.app", "netlify.app", "firebaseapp.com", "web.app"
+)
+UGC_OR_PROFILE_HOSTS = (
+    "cake.me", "notion.site", "medium.com", "substack.com", "sites.google.com",
+    "docs.google.com", "weebly.com", "wixsite.com", "blogspot.com", "wordpress.com", "github.io"
+)
+LOGIN_LURE_TOKENS = (
+    "login", "signin", "sign-in", "log-in", "webmail", "mail-login", "att-mail",
+    "verify", "verification", "password", "reset", "auth", "oauth", "account",
+    "billing", "invoice", "update-kyc", "kyc", "unlock", "security-check"
+)
+BRAND_IMPERSONATION_TOKENS = (
+    "microsoft", "office365", "outlook", "onedrive", "sharepoint", "google",
+    "apple", "icloud", "amazon", "netflix", "paypal", "bank", "sbi", "hdfc", "icici", "att"
+)
 URGENCY_WORDS = (
     "urgent", "immediately", "suspended", "verify your account", "kyc", "otp",
     "password", "reset", "locked", "unauthorized", "refund", "prize", "won",
-    "invoice", "legal notice", "aadhaar", "pan", "cpf", "cnpj", "ssn", "card"
+    "invoice", "legal notice", "aadhaar", "pan", "cpf", "cnpj", "ssn", "card",
+    "confirm identity", "session expired"
 )
 
 def calc_entropy(s: str) -> float:
@@ -63,19 +83,27 @@ def inspect_oauth_and_params(target_url: str, host: str) -> dict:
 
     is_oauth = any(k in lower_url for k in ("/oauth2/", "/authorize", "client_id=", "response_type="))
     redirect_targets = []
-    for key in ("redirect_uri", "redirect_url", "next", "url", "dest", "destination", "return_to", "continue", "r", "target"):
+    for key in ("redirect_uri", "redirect_url", "next", "url", "dest", "destination", "return_to", "continue", "r", "target", "goto"):
         for val in qs.get(key, []):
             redirect_targets.append(unquote(val))
 
     external_redirects = []
+    suspicious_param_values = []
     for rt in redirect_targets:
+        rt_lower = rt.lower()
+        if rt_lower.startswith(("javascript:", "data:", "vbscript:")):
+            suspicious_param_values.append(rt[:120])
+            continue
         rt_host = (urlparse(rt).hostname or "").lower()
         if rt_host and host and not rt_host.endswith(host) and not host.endswith(rt_host):
             external_redirects.append(rt[:160])
 
     scopes_raw = " ".join(qs.get("scope", [])).lower()
     risky_scopes = [
-        s for s in ("mail.read", "mail.send", "files.read", "offline_access", "user.readwrite", "contacts.read", "mailboxsettings")
+        s for s in (
+            "mail.read", "mail.send", "mail.readwrite", "files.read", "files.readwrite",
+            "offline_access", "user.readwrite", "contacts.read", "mailboxsettings"
+        )
         if s in scopes_raw
     ]
 
@@ -83,8 +111,42 @@ def inspect_oauth_and_params(target_url: str, host: str) -> dict:
         "is_oauth_or_auth_flow": is_oauth,
         "has_truncated_ellipsis": "..." in target_url or "…" in target_url,
         "external_redirect_params": external_redirects,
+        "suspicious_param_values": suspicious_param_values,
         "risky_oauth_scopes": risky_scopes,
-        "client_id_present": "client_id" in qs
+        "client_id_present": "client_id" in qs,
+        "query_param_count": len(qs)
+    }
+
+def inspect_path_and_deception(target_url: str, host: str, root_dom: str) -> dict:
+    parsed = urlparse(target_url)
+    path_str = (parsed.path or "").lower()
+    query_str = (parsed.query or "").lower()
+    path_q = f"{path_str} {query_str}"
+
+    lure_hits = [tok for tok in LOGIN_LURE_TOKENS if tok in path_q]
+    is_ugc_host = any(h in host for h in UGC_OR_PROFILE_HOSTS)
+    is_cloud_host = any(h in host for h in SUSPICIOUS_HOSTS)
+
+    # Brand tokens appearing in host/path when host does not cleanly match official root domain
+    brand_hits = []
+    for b in BRAND_IMPERSONATION_TOKENS:
+        if b in host or b in path_str:
+            if b not in root_dom:
+                brand_hits.append(b)
+
+    # Multiple consecutive hyphens or unusual encoded/long path segments
+    has_double_dash_trick = "--" in host or "---" in path_str
+    encoded_percent_count = len(re.findall(r"%[0-9a-fA-F]{2}", target_url))
+
+    return {
+        "login_or_lure_tokens": lure_hits[:6],
+        "is_ugc_or_profile_host": is_ugc_host,
+        "is_cloud_or_tunnel_host": is_cloud_host,
+        "lure_on_ugc_or_profile_path": bool(lure_hits and is_ugc_host),
+        "lure_on_cloud_or_tunnel_host": bool(lure_hits and is_cloud_host),
+        "brand_mismatch_tokens": brand_hits[:5],
+        "has_double_dash_trick": has_double_dash_trick,
+        "encoded_percent_count": encoded_percent_count
     }
 
 def fetch_live_behaviour(target: str, root_dom: str) -> dict:
@@ -138,7 +200,8 @@ def fetch_live_behaviour(target: str, root_dom: str) -> dict:
                 (r"fromCharCode", "String.fromCharCode"),
                 (r"atob\s*\(", "atob() base64 decode"),
                 (r"document\.write\s*\(", "document.write()"),
-                (r"oncontextmenu\s*=|preventDefault\(\)", "context-menu/event block")
+                (r"oncontextmenu\s*=|preventDefault\(\)", "context-menu/event block"),
+                (r"window\.location\s*=|location\.replace\s*\(", "JS location redirect")
             ]
             for pat, label in obf_patterns:
                 if re.search(pat, script_blob, re.IGNORECASE):
@@ -292,7 +355,8 @@ def analyze_url_deep(url: str) -> dict:
         "url_entropy": calc_entropy(target),
         "path_length": len(parsed.path or ""),
         "ssl": ssl_res,
-        "oauth_analysis": inspect_oauth_and_params(target, host)
+        "oauth_analysis": inspect_oauth_and_params(target, host),
+        "path_context": inspect_path_and_deception(target, host, root_dom)
     }
 
     return {
