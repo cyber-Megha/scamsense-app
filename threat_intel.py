@@ -352,7 +352,8 @@ def fetch_live_behaviour(target: str, root_dom: str) -> dict:
                 (r"unescape\s*\(", "unescape()"),
                 (r"fromCharCode", "String.fromCharCode"),
                 (r"atob\s*\(", "atob() base64 decode"),
-                (r"document\.write\s*\(", "document.write()"), (r"oncontextmenu\s*=\vert{}preventDefault\(\)", "context-menu/event block"),
+                (r"document\.write\s*\(", "document.write()"),
+                (r"oncontextmenu\s*=|preventDefault\(\)", "context-menu/event block"),
                 (r"window\.location\s*=|location\.replace\s*\(|location\.href\s*=|window\.open\s*\(", "JS redirect/popup")
             ]
             for pat, label in obf_patterns:
@@ -454,4 +455,91 @@ def check_urlhaus(target_url: str) -> dict:
     if not target_url:
         return {"checked": False, "listed": False, "threat": None}
     try:
-        r = requests.post("https
+        r = requests.post("https://urlhaus-api.abuse.ch/v1/url/", data={"url": target_url}, timeout=4)
+        if r.status_code == 200:
+            data = r.json() or {}
+            if data.get("query_status") == "ok":
+                return {"checked": True, "listed": True, "threat": data.get("threat") or "malware_url"}
+            return {"checked": True, "listed": False, "threat": None}
+    except Exception:
+        pass
+    return {"checked": False, "listed": False, "threat": None}
+
+def check_email_domain_dns(sender: str) -> dict:
+    if not sender or "@" not in sender:
+        return {"status": "no_sender", "sender_domain": None, "has_mx": False, "has_spf": False, "has_dmarc": False}
+    dom = sender.split("@")[-1].strip().lower()
+    rep = {"status": "checked", "sender_domain": dom, "has_mx": False, "has_spf": False, "has_dmarc": False}
+    try:
+        rep["has_mx"] = len(dns.resolver.resolve(dom, "MX", lifetime=3)) > 0
+    except Exception:
+        pass
+    try:
+        txts = [str(r).lower() for r in dns.resolver.resolve(dom, "TXT", lifetime=3)]
+        rep["has_spf"] = any("v=spf1" in t for t in txts)
+    except Exception:
+        pass
+    try:
+        dmarc_txts = [str(r).lower() for r in dns.resolver.resolve(f"_dmarc.{dom}", "TXT", lifetime=3)]
+        rep["has_dmarc"] = any("v=dmarc1" in t for t in dmarc_txts)
+    except Exception:
+        pass
+    return rep
+
+def analyze_url_deep(url: str) -> dict:
+    decoded = unquote((url or "").strip())
+    target = decoded if decoded.startswith(("http://", "https://")) else "http://" + decoded
+    parsed = urlparse(target)
+    host = (parsed.hostname or "").lower()
+    parts = [p for p in host.split(".") if p]
+    root_dom = f"{parts[-2]}.{parts[-1]}" if len(parts) >= 2 else host
+
+    subdomain_labels = parts[:-2] if len(parts) > 2 else []
+    gibberish_subs = [lbl for lbl in subdomain_labels if is_gibberish_label(lbl)]
+
+    behaviour = fetch_live_behaviour(target, root_dom)
+    final_u = behaviour.get("final_url") or target
+
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        f_rdap = ex.submit(get_domain_age_rdap, root_dom)
+        f_gsb = ex.submit(check_gsb, [target, final_u])
+        f_vt = ex.submit(check_vt, final_u)
+        f_uh = ex.submit(check_urlhaus, final_u)
+        f_ssl = ex.submit(get_ssl_info, host)
+
+        rdap_res = f_rdap.result()
+        gsb_res = f_gsb.result()
+        vt_res = f_vt.result()
+        uh_res = f_uh.result()
+        ssl_res = f_ssl.result()
+
+    heuristics = {
+        "protocol": parsed.scheme.upper(),
+        "domain": host,
+        "root_domain": root_dom,
+        "domain_age": rdap_res,
+        "is_ip_host": is_ip_address(host),
+        "is_punycode": "xn--" in host,
+        "subdomain_count": len(subdomain_labels),
+        "gibberish_subdomains": gibberish_subs[:4],
+        "has_gibberish_subdomain": bool(gibberish_subs),
+        "has_at_trap": "@" in (parsed.netloc or ""),
+        "risky_tld": any(host.endswith(tld) for tld in RISKY_TLDS),
+        "tunnel_or_cloud_host": any(h in host for h in TUNNEL_AND_CLOUD_HOSTS),
+        "url_entropy": calc_entropy(target),
+        "path_length": len(parsed.path or ""),
+        "ssl": ssl_res,
+        "wrapper_cloak": inspect_wrapper_and_cloak(target, host),
+        "oauth_analysis": inspect_oauth_and_params(target, host),
+        "path_context": inspect_path_and_deception(target, host, root_dom)
+    }
+
+    return {
+        "input_url": url,
+        "normalized_url": target,
+        "heuristics": heuristics,
+        "behaviour": behaviour,
+        "google_safe_browsing": gsb_res,
+        "virustotal": vt_res,
+        "urlhaus_threat_feed": uh_res
+    }
