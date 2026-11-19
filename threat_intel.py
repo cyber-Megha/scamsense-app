@@ -352,8 +352,7 @@ def fetch_live_behaviour(target: str, root_dom: str) -> dict:
                 (r"unescape\s*\(", "unescape()"),
                 (r"fromCharCode", "String.fromCharCode"),
                 (r"atob\s*\(", "atob() base64 decode"),
-                (r"document\.write\s*\(", "document.write()"),
-                (r"oncontextmenu\s*=|preventDefault\(\)", "context-menu/event block"),
+                (r"document\.write\s*\(", "document.write()"), (r"oncontextmenu\s*=\vert{}preventDefault\(\)", "context-menu/event block"),
                 (r"window\.location\s*=|location\.replace\s*\(|location\.href\s*=|window\.open\s*\(", "JS redirect/popup")
             ]
             for pat, label in obf_patterns:
@@ -541,5 +540,4 @@ def analyze_url_deep(url: str) -> dict:
         "behaviour": behaviour,
         "google_safe_browsing": gsb_res,
         "virustotal": vt_res,
-        "urlhaus_threat_feed": uh_res
-    }
+        "urlhaus_threat_
