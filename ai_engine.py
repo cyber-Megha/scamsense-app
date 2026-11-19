@@ -45,7 +45,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
     path_ctx = heur.get("path_context") or {}
     dom_age = heur.get("domain_age") or {}
 
-    # 1. Optional feed corroboration
     if gsb.get("is_dangerous"):
         score += 75
         reasons.append(f"Flagged by Safe Browsing ({gsb.get('threat_type')})")
@@ -66,7 +65,20 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 70
         reasons.append(f"Listed in active malware feed ({uh.get('threat') or 'URLhaus'})")
 
-    # 2. Wrapped URLs, Base64/Double-Encoded Payloads & Cloak Shield
+    # TLD-independent randomized/gibberish subdomain & path checks
+    gib_subs = heur.get("gibberish_subdomains") or []
+    gib_paths = path_ctx.get("gibberish_path_segments") or []
+    if gib_subs:
+        score += 36
+        reasons.append(
+            f"Randomized/gibberish subdomain label(s) ({', '.join(gib_subs)}) on '{heur.get('domain')}' regardless of TLD"
+        )
+    if gib_paths:
+        score += 22
+        reasons.append(
+            f"Randomized/gibberish URL path segment(s) detected ({', '.join(gib_paths[:2])})"
+        )
+
     if wrap_info.get("external_wrapped_hosts"):
         score += 54
         reasons.append(
@@ -88,7 +100,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 22
         reasons.append("Long URL fragment (#) payload—often used for client-side routing or credential tricks")
 
-    # 3. Newly Registered Domain Age
     if dom_age.get("checked") and dom_age.get("is_newly_registered"):
         age_d = dom_age.get("age_days")
         if age_d is not None and age_d <= 30:
@@ -98,7 +109,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
             score += 28
             reasons.append(f"Recently registered domain ({age_d} days old, created {dom_age.get('created_date')})")
 
-    # 4. OAuth Consent Phishing, Redirect & Parameter Smuggling
     if oauth_info.get("external_redirect_params"):
         score += 55
         reasons.append(
@@ -128,7 +138,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 22
         reasons.append("Encoded Base64 string detected in URL query")
 
-    # 5. Path Lures, Tunneling/Cloud Abuse & Brand Deception
     if path_ctx.get("lure_on_ugc_or_profile_path"):
         score += 56
         reasons.append(
@@ -159,7 +168,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 18
         reasons.append("Heavy percent-encoding obscuring URL path or query")
 
-    # 6. Domain, Tunnel/Cloud, TLS & Structural Signals
     if heur.get("is_ip_host"):
         score += 38
         reasons.append("Direct IP address host instead of registered domain")
@@ -189,10 +197,14 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 28
         reasons.append("TLS certificate verification failed")
 
-    # 7. Live Page, Credential Harvesting, Meta Refresh, Anti-Bot Evasion & Script Forensics
     if beh.get("meta_refresh_detected"):
         score += 26
         reasons.append("Automatic HTML meta-refresh redirect detected on page")
+
+    # Combo boost when randomized/gibberish host co-occurs with anti-bot/evasion or new domain
+    if gib_subs and (beh.get("bot_blocked_or_evasive") or dom_age.get("is_newly_registered") or int(beh.get("redirect_count") or 0) >= 1):
+        score += 22
+        reasons.append("Randomized subdomain combined with anti-bot challenge, redirect, or fresh domain signal")
 
     if beh.get("bot_blocked_or_evasive") and (
         smuggle_params or wrap_info.get("has_nested_wrapped_url") or path_ctx.get("login_or_lure_tokens")
@@ -224,15 +236,15 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         if (
             heur.get("risky_tld") or heur.get("tunnel_or_cloud_host") or heur.get("is_ip_host")
             or len(ext_forms) > 0 or path_ctx.get("login_or_lure_tokens") or path_ctx.get("brand_mismatch_tokens")
-            or dom_age.get("is_newly_registered")
+            or dom_age.get("is_newly_registered") or gib_subs
         ):
             score += 28
-            reasons.append("Password field paired with tunnel/cloud/fresh domain, deceptive path, brand mismatch, or external form")
+            reasons.append("Password field paired with suspicious subdomain/host/domain age, deceptive path, or external form")
     elif has_cred_inputs and (
-        heur.get("tunnel_or_cloud_host") or heur.get("risky_tld") or path_ctx.get("login_or_lure_tokens")
+        heur.get("tunnel_or_cloud_host") or heur.get("risky_tld") or path_ctx.get("login_or_lure_tokens") or gib_subs
     ):
         score += 24
-        reasons.append("Credential/account input fields present alongside suspicious host or lure path")
+        reasons.append("Credential/account input fields present alongside suspicious host, subdomain, or lure path")
 
     if has_file and (heur.get("risky_tld") or heur.get("tunnel_or_cloud_host") or len(ext_forms) > 0):
         score += 32
@@ -253,7 +265,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += min(30, hidden_iframes * 15)
         reasons.append(f"{hidden_iframes} hidden iframe(s) embedded on page")
 
-    # 8. Social Engineering & DNS Forensics
     combined_txt = f"{text_data or ''} {beh.get('text_snippet') or ''}".lower()
     if len(urgency_hits) >= 2:
         score += 24
@@ -297,8 +308,8 @@ def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
     steps = parsed.get("how_to_stay_safe")
     if not isinstance(steps, list) or not steps:
         steps = [
-            "Do not trust a link solely because the outer domain or wrapper looks familiar—inspect where it actually leads.",
-            "Open the official service manually in a fresh browser session."
+            "Do not type your password, OTP, or bank details on any page opened from an unexpected link—even if the website name looks familiar.",
+            "If you want to check your account, close this page, open a fresh browser tab, and visit the official website or app directly."
         ]
 
     return {
@@ -424,7 +435,7 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
             f"page title reported as '{title}'."
         )
         why_text = (
-            f"No wrapped/nested external destinations, deceptive login/OAuth paths, fresh-domain red flags, "
+            f"No wrapped/nested external destinations, deceptive login/OAuth paths, gibberish subdomains, fresh-domain red flags, "
             f"credential forms, or obfuscated scripts were observed. "
             f"{'HTTPS TLS certificate check succeeded.' if proto == 'HTTPS' and tls_ok else 'Observed transport and structure appear normal.'}"
         )
@@ -434,29 +445,29 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
         )
         evidence_text = f"Domain: {domain} | Age: {age_str} | Protocol: {proto} | TLS: {tls_ok} | Risk Score: {score}/100"
         safe_steps = [
-            "Confirm the exact domain spelling in your browser address bar before logging in.",
-            "Avoid opening unexpected links from unsolicited messages or emails."
+            "This link currently looks clean, so you can browse normally—just double-check the website spelling in your browser bar before typing any password.",
+            "Never share your OTP, PIN, or password if any page suddenly asks for urgent verification."
         ]
     else:
         what_detected = (
             f"Shield inspection of {content_type} targeting '{domain}' ({proto}, age: {age_str}) "
-            f"flagged wrapper/cloak, structural, or live-page deception signals (HTTP: {beh.get('http_status') or 'Blocked/Timeout'}, redirects: {redirects})."
+            f"flagged structural, subdomain/path, wrapper, or live-page deception signals (HTTP: {beh.get('http_status') or 'Blocked/Timeout'}, redirects: {redirects})."
         )
         why_text = (
-            f"{'; '.join(reasons)}. Attackers often wrap malicious destinations inside legitimate-looking links, "
-            f"encoded parameters, redirects, or decoy pages so surface appearance hides the real hazard."
+            f"{'; '.join(reasons)}. Attackers use randomized subdomains across any TLD, wrap malicious destinations inside legitimate-looking links, "
+            f"or hide behind redirects and anti-bot checks so surface appearance does not give away the risk."
         )
         impact_text = (
-            "High risk of credential theft, session/token hijacking, account takeover, or deceptive redirection "
-            "if you follow the wrapped/hidden destination or enter sensitive data."
+            "High risk of malware/credential compromise, session hijacking, account takeover, or deceptive redirection "
+            "if you follow the link, download files, or enter sensitive information."
         )
         evidence_text = (
-            f"Score: {score}/100 | Host: {domain} | Wrapped Hosts: {wrap_info.get('external_wrapped_hosts') or []} | "
-            f"Lures: {path_ctx.get('login_or_lure_tokens') or []} | Final URL: {final_url}"
+            f"Score: {score}/100 | Host: {domain} | Gibberish Subs: {heur.get('gibberish_subdomains') or []} | "
+            f"Wrapped Hosts: {wrap_info.get('external_wrapped_hosts') or []} | Final URL: {final_url}"
         )
         safe_steps = [
-            "Do NOT rely on the outer domain name or wrapper—never enter passwords, OTPs, or approve permissions through hidden/wrapped links.",
-            "Open the official service directly in a clean browser tab and verify through a trusted bookmark."
+            "Stop and do NOT enter your password, OTP, card number, or download files/updates from this link, even if the outer domain or TLD looks familiar.",
+            "Close this tab, open a fresh browser window, and go directly to the official website or service on your own."
         ]
 
     return {
@@ -496,8 +507,9 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
 
     prompt = f"""
 You are a Principal Digital Forensics & Anti-Phishing Analyst for ScamSense.
-Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect behavior, and user input.
-Expose how attackers wrap or disguise malicious destinations inside legitimate-looking links, nested URLs, encoded parameters, redirects, or decoy pages so surface trust does not fool the user.
+Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect behavior, and user input.
+Treat randomized/gibberish subdomains or paths as suspicious regardless of whether the TLD is .com, .mx, .org, or any other extension.
+Expose how attackers disguise malicious destinations inside legitimate-looking links, nested URLs, encoded parameters, redirects, or decoy pages.
 Do not invent facts not present in the telemetry, and do not mention internal AI model names.
 
 Content Type: {content_type}
@@ -511,11 +523,14 @@ Return ONLY valid JSON:
 {{
     "risk_score": <integer 0-100 consistent with observed evidence>,
     "classification": "<SAFE HIGH RISK SUSPICIOUS |>",
-    "what_was_detected": "<2-3 clear sentences detailing the outer target, wrapped/nested or encoded elements, domain age, and page behavior>",
-    "why_suspicious": "<3-4 clear sentences explaining concrete wrapper/cloak/structural/behavioral signals and attacker tricks>",
-    "how_affects_user": "<2-3 clear sentences on real-world impact to credentials, accounts, or data>",
-    "evidence": "<Concise age, domain, params/path, redirects/scripts, targets, technical telemetry wrapper/nested>",
-    "how_to_stay_safe": ["<actionable step 1>", "<actionable step 2>"]
+    "what_was_detected": "<2-3 clear sentences detailing the outer target, subdomain/path anomalies, wrapped/nested or encoded elements, domain age, and page behavior>",
+    "why_suspicious": "<3-4 clear sentences explaining concrete signals and attacker tricks across any TLD>",
+    "how_affects_user": "<2-3 clear sentences on real-world impact to credentials, accounts, files, or data>",
+    "evidence": "<Concise age, domain, gibberish/wrapper/params/path, redirects/scripts, technical telemetry>",
+    "how_to_stay_safe": [
+        "<Clear, plain-English instruction for a non-technical everyday user explaining what NOT to do right now and why>",
+        "<Simple, step-by-step safe alternative action they should take instead>"
+    ]
 }}
 """
 
