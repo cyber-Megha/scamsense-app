@@ -40,7 +40,9 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
     heur = report.get("heuristics") or {}
     beh = report.get("behaviour") or {}
     ssl_info = heur.get("ssl") or {}
+    oauth_info = heur.get("oauth_analysis") or {}
 
+    # 1. Threat intelligence feeds
     if gsb.get("is_dangerous"):
         score += 65
         reasons.append(f"Flagged by Safe Browsing ({gsb.get('threat_type')})")
@@ -61,15 +63,38 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 60
         reasons.append(f"Listed in active malware feed ({uh.get('threat') or 'URLhaus'})")
 
+    # 2. OAuth Consent Phishing & Open Redirect Abuse (Abusing legitimate brand domains)
+    if oauth_info.get("external_redirect_params"):
+        score += 45
+        reasons.append(
+            f"OAuth/login parameter redirects user to external domain: {oauth_info['external_redirect_params'][0]}"
+        )
+    if oauth_info.get("risky_oauth_scopes"):
+        score += 30
+        reasons.append(
+            f"Requests high-privilege OAuth scopes: {', '.join(oauth_info['risky_oauth_scopes'])}"
+        )
+    if oauth_info.get("is_oauth_or_auth_flow") and oauth_info.get("has_truncated_ellipsis"):
+        score += 38
+        reasons.append(
+            "Truncated OAuth authorization URL hides redirect_uri and client_id parameters (common OAuth consent phishing vector)"
+        )
+    elif oauth_info.get("is_oauth_or_auth_flow") and not oauth_info.get("external_redirect_params"):
+        score += 28
+        reasons.append(
+            "OAuth authentication flow detected—even on legitimate domains, attackers abuse OAuth consent prompts to hijack account tokens"
+        )
+
+    # 3. Domain & URL structure
     if heur.get("is_ip_host"):
         score += 22
         reasons.append("Uses raw IP address instead of domain name")
     if heur.get("is_punycode"):
         score += 25
-        reasons.append("Punycode (xn--) domain detected")
+        reasons.append("Punycode (xn--) lookalike domain detected")
     if heur.get("has_at_trap"):
         score += 25
-        reasons.append("Contains '@' redirect/credential trap in URL")
+        reasons.append("Contains '@' credential/redirect trap in URL")
     if heur.get("risky_tld"):
         score += 18
         reasons.append(f"High-risk or disposable TLD on '{heur.get('domain')}'")
@@ -88,12 +113,13 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         reasons.append("Unencrypted HTTP transport")
     elif heur.get("protocol") == "HTTPS" and heur.get("domain") and not ssl_info.get("tls_valid"):
         score += 18
-        reasons.append("HTTPS connection failed TLS certificate check")
+        reasons.append("HTTPS connection failed TLS certificate verification")
 
+    # 4. Live page & script behaviour
     redirs = int(beh.get("redirect_count") or 0)
     if redirs >= 3:
         score += 15
-        reasons.append(f"Multiple redirects ({redirs} hops)")
+        reasons.append(f"Multiple HTTP redirects ({redirs} hops)")
     elif redirs >= 1 and beh.get("cross_domain_redirect"):
         score += 14
         reasons.append("Redirected across different domains")
@@ -108,7 +134,7 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
 
     if has_pwd and (heur.get("risky_tld") or heur.get("free_or_cloud_host") or heur.get("is_ip_host") or len(ext_forms) > 0):
         score += 28
-        reasons.append("Password input on untrusted or external-action page")
+        reasons.append("Password input field on untrusted or external-action page")
     elif has_pwd:
         score += 8
         reasons.append("Password/login input field present on page")
@@ -132,6 +158,7 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += min(20, hidden_iframes * 10)
         reasons.append(f"{hidden_iframes} hidden iframe(s) detected")
 
+    # 5. Social engineering & DNS checks
     combined_txt = f"{text_data or ''} {beh.get('text_snippet') or ''}".lower()
     if len(urgency_hits) >= 2 and (heur.get("risky_tld") or heur.get("free_or_cloud_host") or beh.get("cross_domain_redirect") or has_pwd):
         score += 16
@@ -168,7 +195,7 @@ def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
     except Exception:
         ai_score = deterministic_score
 
-    if deterministic_score >= 65:
+    if deterministic_score >= 60:
         final_score = max(deterministic_score, int(round(0.75 * deterministic_score + 0.25 * ai_score)))
     else:
         final_score = int(round(0.65 * deterministic_score + 0.35 * ai_score))
@@ -178,14 +205,14 @@ def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
 
     steps = parsed.get("how_to_stay_safe")
     if not isinstance(steps, list) or not steps:
-        steps = ["Avoid entering sensitive credentials or personal details on unverified links."]
+        steps = ["Avoid entering sensitive credentials or granting app permissions on unverified links."]
 
     return {
         "risk_score": final_score,
         "classification": tier,
-        "what_was_detected": str(parsed.get("what_was_detected") or "Target analyzed for behavioral and security signals.").strip(),
-        "why_suspicious": str(parsed.get("why_suspicious") or "Evaluated domain structure, network behavior, and page indicators.").strip(),
-        "how_affects_user": str(parsed.get("how_affects_user") or "Follow standard security precautions before interacting.").strip(),
+        "what_was_detected": str(parsed.get("what_was_detected") or "Target analyzed for behavioral, structural, and authentication signals.").strip(),
+        "why_suspicious": str(parsed.get("why_suspicious") or "Evaluated domain structure, OAuth parameters, network behavior, and threat feeds.").strip(),
+        "how_affects_user": str(parsed.get("how_affects_user") or "Follow security verification steps before signing in or sharing data.").strip(),
         "evidence": str(parsed.get("evidence") or f"Computed Risk Score: {final_score}/100").strip(),
         "how_to_stay_safe": [str(s).strip() for s in steps[:3] if str(s).strip()]
     }
@@ -283,22 +310,81 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
     report = intel if "behaviour" in intel else next(iter(intel.get("embedded_urls_intel") or []), {})
     heur = report.get("heuristics") or {}
     beh = report.get("behaviour") or {}
-    target_label = heur.get("domain") or beh.get("final_url") or (text_data[:60] if text_data else content_type)
+    ssl_info = heur.get("ssl") or {}
+    oauth_info = heur.get("oauth_analysis") or {}
+
+    domain = heur.get("domain") or "Target Payload"
+    proto = heur.get("protocol") or "N/A"
+    final_url = beh.get("final_url") or text_data or "N/A"
+    title = beh.get("title") or "Dynamic/JS-rendered or protected page"
+    redirects = int(beh.get("redirect_count") or 0)
+    tls_ok = ssl_info.get("tls_valid")
+
+    if oauth_info.get("is_oauth_or_auth_flow"):
+        what_detected = (
+            f"Detected an OAuth/Authentication flow hosted on '{domain}' ({proto}) with {redirects} HTTP redirect(s). "
+            f"Page metadata: '{title}'."
+        )
+        why_text = (
+            f"{'; '.join(reasons)}. Attackers frequently abuse genuine identity providers (such as Microsoft or Google OAuth endpoints) "
+            f"by embedding malicious 'client_id' and 'redirect_uri' parameters so victims trust the domain before granting account access."
+        )
+        impact_text = (
+            "If you sign in and approve an unverified OAuth consent prompt, the attacker's third-party app can silently read emails, "
+            "access cloud files, or redirect your browser to a phishing site without stealing your password directly."
+        )
+        evidence_text = (
+            f"Score: {score}/100 | Host: {domain} | OAuth Flow: True | "
+            f"External Redirects: {oauth_info.get('external_redirect_params') or 'Hidden/None'} | "
+            f"Truncated URL: {oauth_info.get('has_truncated_ellipsis')}"
+        )
+        safe_steps = [
+            "Never trust a login link solely because the main domain says microsoftonline.com or google.com—check the app name and 'redirect_uri' parameter.",
+            "Do not click 'Accept' on any OAuth permission screen unless you initiated the login from an official app."
+        ]
+    elif tier == "SAFE":
+        what_detected = (
+            f"Inspected {content_type} targeting '{domain}' ({proto}) with {redirects} redirect(s); "
+            f"page title reported as '{title}'."
+        )
+        why_text = (
+            f"No high-risk domain anomalies, malicious threat-feed hits, obfuscated scripts, or external credential-harvesting forms were observed. "
+            f"{'TLS certificate verification succeeded over HTTPS, confirming encrypted transport.' if proto == 'HTTPS' and tls_ok else 'Observed network and structural signals align with standard behavior.'}"
+        )
+        impact_text = (
+            "Low immediate threat based on structural, behavioral, and threat-intelligence checks. "
+            "Still verify context before entering sensitive passwords or financial details."
+        )
+        evidence_text = (
+            f"Domain: {domain} | Protocol: {proto} | TLS Valid: {tls_ok} | "
+            f"Redirects: {redirects} | Risk Score: {score}/100"
+        )
+        safe_steps = [
+            "Confirm the exact domain spelling in your browser address bar before logging in.",
+            "Avoid opening unexpected links sent via unsolicited emails or messages."
+        ]
+    else:
+        what_detected = f"Analyzed {content_type} targeting '{domain}' ({proto}) with page state '{title}'."
+        why_text = "; ".join(reasons) + "."
+        impact_text = (
+            "High likelihood of credential theft, token hijacking, financial fraud, or malicious redirection."
+            if tier == "HIGH RISK"
+            else "Anomalous structural or behavioral indicators were detected; interacting without verification risks account compromise."
+        )
+        evidence_text = f"Score: {score}/100 | Final URL: {final_url} | Signals: {'; '.join(reasons[:3])}"
+        safe_steps = [
+            "Do not enter passwords, OTPs, payment details, or approve app permissions on this page.",
+            "Navigate directly to the official website manually instead of using this link."
+        ]
 
     return {
         "risk_score": score,
         "classification": tier,
-        "what_was_detected": f"Analyzed {content_type} targeting '{target_label}' with title '{beh.get('title') or 'N/A'}'.",
-        "why_suspicious": "; ".join(reasons) + ".",
-        "how_affects_user": (
-            "High likelihood of credential theft, financial fraud, or unwanted software/redirect."
-            if tier == "HIGH RISK"
-            else ("Some anomalies warrant caution before sharing personal or login details." if tier == "SUSPICIOUS" else "No high-risk behavioral or feed indicators observed.")
-        ),
-        "evidence": f"Score: {score}/100 | Final URL: {beh.get('final_url') or 'N/A'} | Signals: {'; '.join(reasons[:3])}",
-        "how_to_stay_safe": [
-            "Do not enter passwords, OTPs, or ID details on untrusted pages." if tier != "SAFE" else "Verify the exact domain before entering sensitive credentials."
-        ]
+        "what_was_detected": what_detected,
+        "why_suspicious": why_text,
+        "how_affects_user": impact_text,
+        "evidence": evidence_text,
+        "how_to_stay_safe": safe_steps
     }
 
 def _cleanup_cache():
@@ -327,9 +413,10 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
     compact_intel = json.dumps(intel, default=str)[:6000]
 
     prompt = f"""
-You are a Digital Forensics & Anti-Phishing Analyst for ScamSense.
-Analyze the target using ONLY the observed telemetry, page behavior, and user input.
-Do not invent facts not present in the telemetry, and do not mention internal model names.
+You are a Senior Digital Forensics & Anti-Phishing Analyst for ScamSense.
+Provide a sharp, detailed, educational forensic explanation using ONLY the observed telemetry, OAuth parameters, page behavior, and user input.
+If an OAuth or authentication URL on a well-known domain (like microsoftonline.com or accounts.google.com) is analyzed, explicitly explain how attackers abuse legitimate OAuth endpoints via malicious redirect_uri, client_id, or consent permissions (OAuth Consent Phishing).
+Do not invent facts not present in the telemetry, and do not mention internal AI model names.
 
 Content Type: {content_type}
 User Input: {(text_data or "")[:1500]}
@@ -342,10 +429,10 @@ Return ONLY valid JSON:
 {{
     "risk_score": <integer 0-100 consistent with observed evidence>,
     "classification": "<SAFE HIGH RISK SUSPICIOUS |>",
-    "what_was_detected": "<2 clear sentences>",
-    "why_suspicious": "<2-3 clear sentences based on concrete signals>",
-    "how_affects_user": "<2 clear sentences on practical user impact>",
-    "evidence": "<Concise behavior, domain, from or proof technical telemetry>",
+    "what_was_detected": "<2-3 clear sentences describing the exact URL, host, protocol, and authentication/page behavior>",
+    "why_suspicious": "<3 clear sentences explaining the specific technical reasons and attacker tactics>",
+    "how_affects_user": "<2-3 clear sentences on the concrete security impact to the victim>",
+    "evidence": "<Concise OAuth domain, from or parameters, proof redirects, technical telemetry>",
     "how_to_stay_safe": ["<actionable step 1>", "<actionable step 2>"]
 }}
 """
