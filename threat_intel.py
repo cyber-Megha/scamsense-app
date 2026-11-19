@@ -6,6 +6,7 @@ import ssl
 import base64
 import requests
 import dns.resolver
+from datetime import datetime, timezone
 from urllib.parse import urlparse, unquote, parse_qs
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
@@ -15,30 +16,40 @@ GSB_API_KEY = (os.getenv("SAFE_BROWSING_API_KEY") or os.getenv("GSB_API_KEY") or
 
 RISKY_TLDS = (
     ".tk", ".ml", ".ga", ".cf", ".gq", ".xyz", ".top", ".cfd", ".sbs",
-    ".icu", ".click", ".link", ".work", ".zip", ".mov", ".rest", ".cam", ".live"
+    ".icu", ".click", ".link", ".work", ".zip", ".mov", ".rest", ".cam",
+    ".live", ".shop", ".online", ".site", ".website", ".pw", ".cc", ".buzz"
 )
-SUSPICIOUS_HOSTS = (
-    "ngrok", "trycloudflare", "pages.dev", "workers.dev", "supabase.co",
-    "herokuapp.com", "000webhostapp.com", "vercel.app", "netlify.app", "firebaseapp.com", "web.app"
+TUNNEL_AND_CLOUD_HOSTS = (
+    "ngrok", "ngrok-free", "trycloudflare", "loclx", "serveo", "localtunnel",
+    "pages.dev", "workers.dev", "supabase.co", "herokuapp.com", "000webhostapp.com",
+    "vercel.app", "netlify.app", "firebaseapp.com", "web.app", "duckdns.org", "glitch.me", "replit.dev"
 )
 UGC_OR_PROFILE_HOSTS = (
     "cake.me", "notion.site", "medium.com", "substack.com", "sites.google.com",
-    "docs.google.com", "weebly.com", "wixsite.com", "blogspot.com", "wordpress.com", "github.io"
+    "docs.google.com", "weebly.com", "wixsite.com", "blogspot.com", "wordpress.com",
+    "github.io", "canva.site", "linktr.ee", "bio.link"
 )
 LOGIN_LURE_TOKENS = (
     "login", "signin", "sign-in", "log-in", "webmail", "mail-login", "att-mail",
     "verify", "verification", "password", "reset", "auth", "oauth", "account",
-    "billing", "invoice", "update-kyc", "kyc", "unlock", "security-check"
+    "billing", "invoice", "update-kyc", "kyc", "unlock", "security-check",
+    "wallet", "claim", "trade", "session", "confirm", "recover", "portal"
 )
 BRAND_IMPERSONATION_TOKENS = (
     "microsoft", "office365", "outlook", "onedrive", "sharepoint", "google",
-    "apple", "icloud", "amazon", "netflix", "paypal", "bank", "sbi", "hdfc", "icici", "att"
+    "gmail", "apple", "icloud", "amazon", "netflix", "paypal", "facebook",
+    "instagram", "whatsapp", "bank", "sbi", "hdfc", "icici", "att", "steam", "binance"
+)
+SMUGGLE_AND_TRACK_PARAMS = (
+    "referrer", "af_tranid", "click_id", "clickid", "subid", "aff_id", "pid",
+    "redirect_uri", "redirect_url", "next", "url", "dest", "destination",
+    "return_to", "continue", "goto", "token", "sid", "state", "code", "link", "to"
 )
 URGENCY_WORDS = (
     "urgent", "immediately", "suspended", "verify your account", "kyc", "otp",
     "password", "reset", "locked", "unauthorized", "refund", "prize", "won",
     "invoice", "legal notice", "aadhaar", "pan", "cpf", "cnpj", "ssn", "card",
-    "confirm identity", "session expired"
+    "confirm identity", "session expired", "sign in", "log in", "enter code"
 )
 
 def calc_entropy(s: str) -> float:
@@ -55,6 +66,28 @@ def is_ip_address(host: str) -> bool:
     except OSError:
         return False
 
+def get_domain_age_rdap(root_domain: str) -> dict:
+    info = {"checked": False, "age_days": None, "created_date": None, "is_newly_registered": False}
+    if not root_domain or is_ip_address(root_domain):
+        return info
+    try:
+        r = requests.get(f"https://rdap.org/domain/{root_domain}", timeout=3.5, headers={"Accept": "application/rdap+json"})
+        if r.status_code == 200:
+            data = r.json() or {}
+            for ev in data.get("events") or []:
+                if ev.get("eventAction") == "registration" and ev.get("eventDate"):
+                    raw_dt = ev["eventDate"].replace("Z", "+00:00")
+                    created = datetime.fromisoformat(raw_dt)
+                    age_days = max(0, (datetime.now(timezone.utc) - created).days)
+                    info["checked"] = True
+                    info["age_days"] = age_days
+                    info["created_date"] = created.strftime("%Y-%m-%d")
+                    info["is_newly_registered"] = age_days <= 90
+                    break
+    except Exception:
+        pass
+    return info
+
 def get_ssl_info(domain: str, port: int = 443) -> dict:
     info = {"tls_valid": False, "issuer": None, "not_after": None}
     if not domain or is_ip_address(domain):
@@ -66,8 +99,7 @@ def get_ssl_info(domain: str, port: int = 443) -> dict:
                 cert = ssock.getpeercert()
                 info["tls_valid"] = True
                 info["not_after"] = cert.get("notAfter")
-                issuer_pairs = cert.get("issuer", ())
-                for tup in issuer_pairs:
+                for tup in cert.get("issuer", ()):
                     for k, v in tup:
                         if k == "organizationName":
                             info["issuer"] = v
@@ -76,14 +108,69 @@ def get_ssl_info(domain: str, port: int = 443) -> dict:
         pass
     return info
 
+def inspect_wrapper_and_cloak(target_url: str, host: str) -> dict:
+    """Detects wrapped URLs, encoded nested targets, fragments, and wrapper/cloak tricks."""
+    once = unquote(target_url or "")
+    twice = unquote(once)
+    parsed = urlparse(target_url)
+    qs = parse_qs(parsed.query)
+
+    nested_urls = []
+    decoded_b64_urls = []
+
+    for key, vals in qs.items():
+        for v in vals:
+            u1 = unquote(v)
+            u2 = unquote(u1)
+            for candidate in (v, u1, u2):
+                if "http://" in candidate.lower() or "https://" in candidate.lower():
+                    nested_urls.append(candidate[:160])
+                # Attempt Base64 decode if value looks like an encoded payload
+                cleaned_b64 = re.sub(r"[^A-Za-z0-9+/=_-]", "", candidate)
+                if len(cleaned_b64) >= 16:
+                    try:
+                        padded = cleaned_b64.replace("-", "+").replace("_", "/")
+                        padded += "=" * ((4 - len(padded) % 4) % 4)
+                        dec = base64.b64decode(padded, validate=False).decode("utf-8", errors="ignore")
+                        if any(tok in dec.lower() for tok in ("http://", "https://", "login", "signin", "verify", "oauth", "redirect")):
+                            decoded_b64_urls.append(dec[:140])
+                    except Exception:
+                        pass
+
+    # Also check URL embedded inside path or fragment (#)
+    path_and_frag = f"{parsed.path or ''}#{parsed.fragment or ''}"
+    for m in re.findall(r"https?://[^\s\"'<>]+", unquote(path_and_frag), flags=re.IGNORECASE):
+        nested_urls.append(m[:160])
+
+    external_wrapped_hosts = []
+    for nu in nested_urls + decoded_b64_urls:
+        nh = (urlparse(nu).hostname or "").lower()
+        if nh and host and not nh.endswith(host) and not host.endswith(nh):
+            external_wrapped_hosts.append(nh)
+
+    double_encoded = (twice != once) and ("%" in once)
+
+    return {
+        "has_nested_wrapped_url": bool(nested_urls or decoded_b64_urls),
+        "nested_urls_found": nested_urls[:4],
+        "decoded_base64_lures": decoded_b64_urls[:3],
+        "external_wrapped_hosts": list(dict.fromkeys(external_wrapped_hosts))[:4],
+        "double_encoded_url": double_encoded,
+        "has_fragment_payload": bool(parsed.fragment and len(parsed.fragment) > 8)
+    }
+
 def inspect_oauth_and_params(target_url: str, host: str) -> dict:
     parsed = urlparse(target_url)
     qs = parse_qs(parsed.query)
     lower_url = target_url.lower()
+    query_lower = (parsed.query or "").lower()
 
     is_oauth = any(k in lower_url for k in ("/oauth2/", "/authorize", "client_id=", "response_type="))
     redirect_targets = []
-    for key in ("redirect_uri", "redirect_url", "next", "url", "dest", "destination", "return_to", "continue", "r", "target", "goto"):
+    for key in (
+        "redirect_uri", "redirect_url", "next", "url", "dest", "destination",
+        "return_to", "continue", "r", "target", "goto", "referrer", "link", "to"
+    ):
         for val in qs.get(key, []):
             redirect_targets.append(unquote(val))
 
@@ -107,13 +194,17 @@ def inspect_oauth_and_params(target_url: str, host: str) -> dict:
         if s in scopes_raw
     ]
 
+    smuggle_hits = [p for p in SMUGGLE_AND_TRACK_PARAMS if p in query_lower]
+    has_base64_blob = bool(re.search(r"(?:[A-Za-z0-9+/]{20,}(?:==|=|%3D%3D|%3D))", parsed.query or ""))
+
     return {
         "is_oauth_or_auth_flow": is_oauth,
         "has_truncated_ellipsis": "..." in target_url or "…" in target_url,
         "external_redirect_params": external_redirects,
         "suspicious_param_values": suspicious_param_values,
         "risky_oauth_scopes": risky_scopes,
-        "client_id_present": "client_id" in qs,
+        "smuggle_or_affiliate_params": smuggle_hits,
+        "has_base64_query_blob": has_base64_blob,
         "query_param_count": len(qs)
     }
 
@@ -125,25 +216,23 @@ def inspect_path_and_deception(target_url: str, host: str, root_dom: str) -> dic
 
     lure_hits = [tok for tok in LOGIN_LURE_TOKENS if tok in path_q]
     is_ugc_host = any(h in host for h in UGC_OR_PROFILE_HOSTS)
-    is_cloud_host = any(h in host for h in SUSPICIOUS_HOSTS)
+    is_tunnel_or_cloud = any(h in host for h in TUNNEL_AND_CLOUD_HOSTS)
 
-    # Brand tokens appearing in host/path when host does not cleanly match official root domain
     brand_hits = []
     for b in BRAND_IMPERSONATION_TOKENS:
         if b in host or b in path_str:
             if b not in root_dom:
                 brand_hits.append(b)
 
-    # Multiple consecutive hyphens or unusual encoded/long path segments
     has_double_dash_trick = "--" in host or "---" in path_str
     encoded_percent_count = len(re.findall(r"%[0-9a-fA-F]{2}", target_url))
 
     return {
         "login_or_lure_tokens": lure_hits[:6],
         "is_ugc_or_profile_host": is_ugc_host,
-        "is_cloud_or_tunnel_host": is_cloud_host,
+        "is_tunnel_or_cloud_host": is_tunnel_or_cloud,
         "lure_on_ugc_or_profile_path": bool(lure_hits and is_ugc_host),
-        "lure_on_cloud_or_tunnel_host": bool(lure_hits and is_cloud_host),
+        "lure_on_tunnel_or_cloud_host": bool(lure_hits and is_tunnel_or_cloud),
         "brand_mismatch_tokens": brand_hits[:5],
         "has_double_dash_trick": has_double_dash_trick,
         "encoded_percent_count": encoded_percent_count
@@ -153,12 +242,15 @@ def fetch_live_behaviour(target: str, root_dom: str) -> dict:
     behaviour = {
         "final_url": target,
         "http_status": None,
+        "bot_blocked_or_evasive": False,
         "redirect_count": 0,
         "redirect_chain": [],
         "cross_domain_redirect": False,
+        "meta_refresh_detected": False,
         "title": "",
         "text_snippet": "",
         "has_password_field": False,
+        "has_credential_inputs": False,
         "has_file_upload": False,
         "external_form_actions": [],
         "suspicious_form_actions": [],
@@ -175,6 +267,9 @@ def fetch_live_behaviour(target: str, root_dom: str) -> dict:
         behaviour["http_status"] = resp.status_code
         behaviour["final_url"] = resp.url
 
+        if resp.status_code in (403, 429, 503):
+            behaviour["bot_blocked_or_evasive"] = True
+
         chain = [h.url for h in resp.history] + [resp.url]
         behaviour["redirect_chain"] = chain[:8]
         behaviour["redirect_count"] = len(resp.history)
@@ -187,13 +282,21 @@ def fetch_live_behaviour(target: str, root_dom: str) -> dict:
 
         content_type = resp.headers.get("Content-Type", "").lower()
         if "text/html" in content_type and resp.text:
-            html_chunk = resp.text[:120000]
+            html_chunk = resp.text[:130000]
             soup = BeautifulSoup(html_chunk, "html.parser")
 
             if soup.title and soup.title.string:
                 behaviour["title"] = soup.title.string.strip()[:100]
 
-            script_blob = "\n".join((s.get_text(" ") or "") for s in soup.find_all("script"))[:40000]
+            meta_ref = soup.find("meta", attrs={"http-equiv": re.compile(r"^refresh$", re.I)})
+            if meta_ref:
+                behaviour["meta_refresh_detected"] = True
+
+            lower_html = html_chunk.lower()
+            if any(w in lower_html for w in ("just a moment", "cf-browser-verification", "attention required", "access denied", "enable javascript")):
+                behaviour["bot_blocked_or_evasive"] = True
+
+            script_blob = "\n".join((s.get_text(" ") or "") for s in soup.find_all("script"))[:45000]
             obf_patterns = [
                 (r"eval\s*\(", "eval()"),
                 (r"unescape\s*\(", "unescape()"),
@@ -201,7 +304,7 @@ def fetch_live_behaviour(target: str, root_dom: str) -> dict:
                 (r"atob\s*\(", "atob() base64 decode"),
                 (r"document\.write\s*\(", "document.write()"),
                 (r"oncontextmenu\s*=|preventDefault\(\)", "context-menu/event block"),
-                (r"window\.location\s*=|location\.replace\s*\(", "JS location redirect")
+                (r"window\.location\s*=|location\.replace\s*\(|location\.href\s*=|window\.open\s*\(", "JS redirect/popup")
             ]
             for pat, label in obf_patterns:
                 if re.search(pat, script_blob, re.IGNORECASE):
@@ -211,19 +314,29 @@ def fetch_live_behaviour(target: str, root_dom: str) -> dict:
                 style_attr = (iframe.get("style") or "").lower().replace(" ", "")
                 w = str(iframe.get("width") or "").strip()
                 h = str(iframe.get("height") or "").strip()
-                if "display:none" in style_attr or "visibility:hidden" in style_attr or w in ("0", "1") or h in ("0", "1"):
+                if "display:none" in style_attr or "visibility:hidden" in style_attr or "opacity:0" in style_attr or w in ("0", "1") or h in ("0", "1"):
                     behaviour["hidden_iframes"] += 1
 
             for form in soup.find_all("form"):
                 action = (form.get("action") or "").strip()
+                method = (form.get("method") or "get").strip().lower()
                 if action.startswith(("http://", "https://")):
                     act_host = (urlparse(action).hostname or "").lower()
                     if root_dom and root_dom not in act_host:
                         behaviour["external_form_actions"].append(action[:120])
                 elif action in ("", "#") or action.lower().startswith("javascript:"):
                     behaviour["suspicious_form_actions"].append(action or "<empty>")
+                if method == "get" and (form.find("input", {"type": re.compile(r"password|email", re.I)}) or re.search(r"pass|login|user|otp", str(form), re.I)):
+                    behaviour["suspicious_form_actions"].append("GET method on login/credential form")
 
             behaviour["has_password_field"] = bool(soup.find("input", {"type": re.compile(r"^password$", re.I)}))
+            cred_input_hits = False
+            for inp in soup.find_all("input"):
+                attrs_blob = f"{inp.get('type') or ''} {inp.get('name') or ''} {inp.get('id') or ''} {inp.get('placeholder') or ''}".lower()
+                if any(k in attrs_blob for k in ("password", "pass", "email", "username", "user_id", "otp", "pin", "cvv", "card")):
+                    cred_input_hits = True
+                    break
+            behaviour["has_credential_inputs"] = behaviour["has_password_field"] or cred_input_hits
             behaviour["has_file_upload"] = bool(soup.find("input", {"type": re.compile(r"^file$", re.I)}))
 
             for tag in soup(["script", "style", "noscript"]):
@@ -237,6 +350,7 @@ def fetch_live_behaviour(target: str, root_dom: str) -> dict:
 
     except Exception as e:
         behaviour["fetch_error"] = str(e)[:120]
+        behaviour["bot_blocked_or_evasive"] = True
 
     return behaviour
 
@@ -249,7 +363,7 @@ def check_gsb(urls: list) -> dict:
     try:
         endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GSB_API_KEY}"
         payload = {
-            "client": {"clientId": "scamsense-soc", "clientVersion": "5.0"},
+            "client": {"clientId": "scamsense-soc", "clientVersion": "8.0"},
             "threatInfo": {
                 "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
                 "platformTypes": ["ANY_PLATFORM"],
@@ -331,12 +445,14 @@ def analyze_url_deep(url: str) -> dict:
     behaviour = fetch_live_behaviour(target, root_dom)
     final_u = behaviour.get("final_url") or target
 
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        f_rdap = ex.submit(get_domain_age_rdap, root_dom)
         f_gsb = ex.submit(check_gsb, [target, final_u])
         f_vt = ex.submit(check_vt, final_u)
         f_uh = ex.submit(check_urlhaus, final_u)
         f_ssl = ex.submit(get_ssl_info, host)
 
+        rdap_res = f_rdap.result()
         gsb_res = f_gsb.result()
         vt_res = f_vt.result()
         uh_res = f_uh.result()
@@ -346,15 +462,17 @@ def analyze_url_deep(url: str) -> dict:
         "protocol": parsed.scheme.upper(),
         "domain": host,
         "root_domain": root_dom,
+        "domain_age": rdap_res,
         "is_ip_host": is_ip_address(host),
         "is_punycode": "xn--" in host,
         "subdomain_count": max(0, len(parts) - 2),
         "has_at_trap": "@" in (parsed.netloc or ""),
         "risky_tld": any(host.endswith(tld) for tld in RISKY_TLDS),
-        "free_or_cloud_host": any(h in host for h in SUSPICIOUS_HOSTS),
+        "tunnel_or_cloud_host": any(h in host for h in TUNNEL_AND_CLOUD_HOSTS),
         "url_entropy": calc_entropy(target),
         "path_length": len(parsed.path or ""),
         "ssl": ssl_res,
+        "wrapper_cloak": inspect_wrapper_and_cloak(target, host),
         "oauth_analysis": inspect_oauth_and_params(target, host),
         "path_context": inspect_path_and_deception(target, host, root_dom)
     }
