@@ -9,3 +9,5 @@ pypdf2
 pillow
 dnspython
 beautifulsoup4
+opencv-python-headless
+pyzbar
