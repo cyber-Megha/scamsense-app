@@ -13,7 +13,7 @@ GEMINI_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
 GROQ_KEY = (os.getenv("GROQ_API_KEY") or "").strip()
 OPENROUTER_KEY = (os.getenv("OPENROUTER_API_KEY") or "").strip()
 
-gemini_client = genai.Client(api_key=GEMINI_KEY, http_options={"timeout": 10.0}) if GEMINI_KEY else None
+gemini_client = genai.Client(api_key=GEMINI_KEY, http_options={"timeout": 15.0}) if GEMINI_KEY else None
 
 RESULT_CACHE = {}
 CACHE_TTL_SECONDS = 300
@@ -32,6 +32,16 @@ def get_tier(score: int) -> str:
 def _extract_email_from_text(txt: str) -> str:
     m = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", (txt or "").strip())
     return m.group(0).lower() if m else ""
+
+
+def _prepare_image_for_vision(image_bytes: bytes) -> Image.Image:
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    max_dim = 1280
+    w, h = img.size
+    if max(w, h) > max_dim:
+        scale = max_dim / float(max(w, h))
+        img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+    return img
 
 
 def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> tuple[int, list[str]]:
@@ -509,7 +519,7 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
 
 def _detect_visual_threat_cues_from_text(text_blob: str) -> list[str]:
     low = (text_blob or "").lower()
-    cues = [
+    return [
         tok for tok in (
             ".exe", ".apk", ".bat", ".ps1", ".vbs", "payload", "shellcode",
             "unsigned char buf", "bypass", "exploit", "meterpreter",
@@ -517,7 +527,6 @@ def _detect_visual_threat_cues_from_text(text_blob: str) -> list[str]:
         )
         if tok in low
     ]
-    return cues
 
 
 def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
@@ -541,7 +550,6 @@ def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
     ])
     visual_cues = _detect_visual_threat_cues_from_text(combined_narrative)
 
-    # Only elevate score when concrete visual/payload/executable cues are described
     if visual_cues:
         cued_floor = 65 if any(k in visual_cues for k in (".exe", ".apk", "payload", "shellcode", "unsigned char buf", "bypass", "exploit", "meterpreter")) else 48
         final_score = max(deterministic_score, cued_floor, int(round(0.35 * deterministic_score + 0.65 * ai_score)))
@@ -590,7 +598,7 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
         )
         for model_name in ["gemini-2.5-flash", "gemini-2.5-flash-lite"]:
             try:
-                img = Image.open(io.BytesIO(image_bytes))
+                img = _prepare_image_for_vision(image_bytes)
                 res = gemini_client.models.generate_content(
                     model=model_name,
                     contents=[image_prompt, img],
@@ -820,7 +828,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
     intel = extra_intel or {}
     img_hash = hashlib.sha256(image_bytes).hexdigest() if image_bytes else "no_img"
     cache_key = hashlib.sha256(
-        f"{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
+        f"v5.4:{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
     ).hexdigest()
 
     cached = RESULT_CACHE.get(cache_key)
