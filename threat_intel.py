@@ -1,622 +1,569 @@
 import os
-import json
-import hashlib
-import io
 import re
-import time
+import math
+import socket
+import ssl
+import base64
 import requests
-from google import genai
-from google.genai import types
-from PIL import Image
+import dns.resolver
+from datetime import datetime, timezone
+from urllib.parse import urlparse, unquote, parse_qs
+from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor
 
-GEMINI_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
-GROQ_KEY = (os.getenv("GROQ_API_KEY") or "").strip()
-OPENROUTER_KEY = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+VT_API_KEY = (os.getenv("VIRUSTOTAL_API_KEY") or "").strip()
+GSB_API_KEY = (os.getenv("SAFE_BROWSING_API_KEY") or os.getenv("GSB_API_KEY") or "").strip()
 
-gemini_client = genai.Client(api_key=GEMINI_KEY, http_options={"timeout": 10.0}) if GEMINI_KEY else None
-
-RESULT_CACHE = {}
-CACHE_TTL_SECONDS = 300
-MAX_CACHE_ITEMS = 256
-
-
-def get_tier(score: int) -> str:
-    s = max(0, min(100, int(score)))
-    if s <= 30:
-        return "SAFE"
-    if s <= 60:
-        return "SUSPICIOUS"
-    return "HIGH RISK"
-
-
-def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> tuple[int, list[str]]:
-    score = 8
-    reasons = []
-
-    data = intel or {}
-    report = data if "behaviour" in data else next(iter(data.get("embedded_urls_intel") or []), {})
-
-    gsb = report.get("google_safe_browsing") or {}
-    vt = report.get("virustotal") or {}
-    uh = report.get("urlhaus_threat_feed") or {}
-    heur = report.get("heuristics") or {}
-    beh = report.get("behaviour") or {}
-    ssl_info = heur.get("ssl") or {}
-    wrap_info = heur.get("wrapper_cloak") or {}
-    oauth_info = heur.get("oauth_analysis") or {}
-    path_ctx = heur.get("path_context") or {}
-    dom_age = heur.get("domain_age") or {}
-
-    if gsb.get("is_dangerous"):
-        score += 75
-        reasons.append(f"Flagged by Safe Browsing ({gsb.get('threat_type')})")
-
-    vt_mal = int(vt.get("malicious") or 0)
-    vt_sus = int(vt.get("suspicious") or 0)
-    if vt_mal >= 2:
-        score += 65
-        reasons.append(f"{vt_mal} security vendors flagged URL as malicious")
-    elif vt_mal == 1:
-        score += 42
-        reasons.append("1 security vendor flagged URL as malicious")
-    if vt_sus >= 1:
-        score += 20
-        reasons.append(f"{vt_sus} security vendor(s) marked URL suspicious")
-
-    if uh.get("listed"):
-        score += 70
-        reasons.append(f"Listed in active malware feed ({uh.get('threat') or 'URLhaus'})")
-
-    apk_cheat_hits = path_ctx.get("apk_or_cheat_lure_tokens") or []
-    if len(apk_cheat_hits) >= 2:
-        score += 42
-        reasons.append(
-            f"Unofficial APK/panel/cheat/mod lure terms detected ({', '.join(apk_cheat_hits[:4])})—high risk of trojanized packages or account/device bans"
-        )
-    elif len(apk_cheat_hits) == 1:
-        score += 28
-        reasons.append(
-            f"APK/mod/cheat/gaming lure keyword detected ({apk_cheat_hits[0]})—verify package authenticity and avoid untrusted installers"
-        )
-
-    gib_subs = heur.get("gibberish_subdomains") or []
-    gib_paths = path_ctx.get("gibberish_path_segments") or []
-    if gib_subs:
-        score += 36
-        reasons.append(
-            f"Randomized/gibberish subdomain label(s) ({', '.join(gib_subs)}) on '{heur.get('domain')}' regardless of TLD"
-        )
-    if gib_paths:
-        score += 22
-        reasons.append(
-            f"Randomized/gibberish URL path segment(s) detected ({', '.join(gib_paths[:2])})"
-        )
-
-    if wrap_info.get("external_wrapped_hosts"):
-        score += 54
-        reasons.append(
-            f"Outer link wraps external target host(s): {', '.join(wrap_info['external_wrapped_hosts'])}"
-        )
-    elif wrap_info.get("has_nested_wrapped_url"):
-        score += 36
-        reasons.append("Nested URL or encoded destination embedded inside link wrapper")
-
-    if wrap_info.get("decoded_base64_lures"):
-        score += 48
-        reasons.append("Decoded Base64 parameter reveals embedded URL or login/verification lure")
-
-    if wrap_info.get("double_encoded_url"):
-        score += 32
-        reasons.append("Double percent-encoding used to disguise underlying target or parameters")
-
-    if wrap_info.get("has_fragment_payload"):
-        score += 22
-        reasons.append("Long URL fragment (#) payload—often used for client-side routing or credential tricks")
-
-    if dom_age.get("checked") and dom_age.get("is_newly_registered"):
-        age_d = dom_age.get("age_days")
-        if age_d is not None and age_d <= 30:
-            score += 45
-            reasons.append(f"Very fresh domain registration ({age_d} days old, created {dom_age.get('created_date')})")
-        else:
-            score += 28
-            reasons.append(f"Recently registered domain ({age_d} days old, created {dom_age.get('created_date')})")
-
-    if oauth_info.get("external_redirect_params"):
-        score += 55
-        reasons.append(
-            f"Parameter redirects to external domain: {oauth_info['external_redirect_params'][0]}"
-        )
-    if oauth_info.get("suspicious_param_values"):
-        score += 58
-        reasons.append("Executable/script scheme (javascript:/data:/vbscript:) inside URL query")
-    if oauth_info.get("risky_oauth_scopes"):
-        score += 38
-        reasons.append(f"High-privilege OAuth scopes requested: {', '.join(oauth_info['risky_oauth_scopes'])}")
-    if oauth_info.get("is_oauth_or_auth_flow") and oauth_info.get("has_truncated_ellipsis"):
-        score += 55
-        reasons.append("Truncated OAuth flow URL hiding redirect_uri or client_id parameters")
-    elif oauth_info.get("is_oauth_or_auth_flow"):
-        score += 36
-        reasons.append("OAuth/authentication flow detected—verify client_id, redirect_uri, and consent permissions")
-
-    smuggle_params = oauth_info.get("smuggle_or_affiliate_params") or []
-    if smuggle_params and oauth_info.get("has_base64_query_blob"):
-        score += 44
-        reasons.append(f"Base64-encoded payload paired with tracking/redirect params ({', '.join(smuggle_params[:3])})")
-    elif smuggle_params:
-        score += 24
-        reasons.append(f"Tracking/redirect/session parameters present ({', '.join(smuggle_params[:3])})")
-    elif oauth_info.get("has_base64_query_blob"):
-        score += 22
-        reasons.append("Encoded Base64 string detected in URL query")
-
-    if path_ctx.get("lure_on_ugc_or_profile_path"):
-        score += 56
-        reasons.append(
-            f"Login/credential lure ({', '.join(path_ctx.get('login_or_lure_tokens') or [])}) inside profile/resume/UGC path"
-        )
-    if path_ctx.get("lure_on_tunnel_or_cloud_host"):
-        score += 55
-        reasons.append(
-            f"Login/verification lure ({', '.join(path_ctx.get('login_or_lure_tokens') or [])}) on tunneling/cloud host"
-        )
-    elif path_ctx.get("login_or_lure_tokens") and not heur.get("is_ip_host"):
-        score += 28
-        reasons.append(
-            f"Credential/account lure keyword in URL path/query: {', '.join(path_ctx.get('login_or_lure_tokens')[:4])}"
-        )
-
-    if path_ctx.get("has_short_code"):
-        score += 32
-        reasons.append(
-            f"URL shortener link ('{heur.get('domain')}') masks the final destination behind a short path"
-        )
-    elif path_ctx.get("is_url_shortener"):
-        score += 24
-        reasons.append(f"Hosted on URL shortener domain ('{heur.get('domain')}')")
-
-    if path_ctx.get("has_shared_user_path"):
-        score += 30
-        reasons.append(
-            f"User-created/shared path on '{heur.get('domain')}'—legitimate platforms are often used as a shell to host phishing or scam lures"
-        )
-    elif path_ctx.get("is_scheduling_or_form_host"):
-        score += 26
-        reasons.append(
-            f"Hosted on scheduling/meeting/form platform ('{heur.get('domain')}')—frequently abused for fake interview/meeting/credential lures"
-        )
-
-    if path_ctx.get("brand_mismatch_tokens"):
-        score += 36
-        reasons.append(
-            f"Brand/service keyword ({', '.join(path_ctx.get('brand_mismatch_tokens') or [])}) outside official root domain"
-        )
-
-    if path_ctx.get("has_double_dash_trick"):
-        score += 18
-        reasons.append("Consecutive hyphen/dash obfuscation pattern in URL")
-
-    if int(path_ctx.get("encoded_percent_count") or 0) >= 3:
-        score += 18
-        reasons.append("Heavy percent-encoding obscuring URL path or query")
-
-    if heur.get("is_ip_host"):
-        score += 38
-        reasons.append("Direct IP address host instead of registered domain")
-    if heur.get("is_punycode"):
-        score += 40
-        reasons.append("Punycode (xn--) homoglyph/lookalike domain")
-    if heur.get("has_at_trap"):
-        score += 36
-        reasons.append("'@' trap in URL authority/redirect syntax")
-    if heur.get("risky_tld"):
-        score += 30
-        reasons.append(f"High-risk or disposable TLD on '{heur.get('domain')}'")
-    if heur.get("tunnel_or_cloud_host"):
-        score += 32
-        reasons.append(f"Hosted on tunneling/free/cloud platform ('{heur.get('domain')}') often used for instant phishing")
-    if int(heur.get("subdomain_count") or 0) >= 3:
-        score += 18
-        reasons.append("Multi-level subdomain structure potentially masking target")
-    if float(heur.get("url_entropy") or 0) >= 4.4 and int(heur.get("path_length") or 0) > 20:
-        score += 16
-        reasons.append("High-entropy / randomized path string")
-
-    if heur.get("protocol") == "HTTP" and not heur.get("is_ip_host"):
-        score += 20
-        reasons.append("Unencrypted HTTP transport")
-    elif heur.get("protocol") == "HTTPS" and heur.get("domain") and not ssl_info.get("tls_valid"):
-        score += 28
-        reasons.append("TLS certificate verification failed")
-
-    if beh.get("sparse_or_js_page"):
-        score += 26
-        reasons.append(
-            "Page relies on dynamic scripts or returns minimal static content—hidden lures or post-render traps may not appear in static fetch"
-        )
-
-    if beh.get("meta_refresh_detected"):
-        score += 26
-        reasons.append("Automatic HTML meta-refresh redirect detected on page")
-
-    if gib_subs and (
-        beh.get("bot_blocked_or_evasive")
-        or dom_age.get("is_newly_registered")
-        or int(beh.get("redirect_count") or 0) >= 1
-    ):
-        score += 22
-        reasons.append("Randomized subdomain combined with anti-bot challenge, redirect, or fresh domain signal")
-
-    if beh.get("bot_blocked_or_evasive") and (
-        path_ctx.get("has_short_code")
-        or path_ctx.get("has_shared_user_path")
-        or path_ctx.get("is_scheduling_or_form_host")
-    ):
-        score += 24
-        reasons.append(
-            "Anti-bot or Cloudflare challenge blocked inspection on a short/shared link—actual destination could not be verified"
-        )
-
-    if beh.get("bot_blocked_or_evasive") and (
-        smuggle_params
-        or wrap_info.get("has_nested_wrapped_url")
-        or path_ctx.get("login_or_lure_tokens")
-        or oauth_info.get("is_oauth_or_auth_flow")
-        or heur.get("tunnel_or_cloud_host")
-        or dom_age.get("is_newly_registered")
-    ):
-        score += 30
-        reasons.append("Scanner blocked or served anti-bot/JS challenge on a wrapped, parameterized, or high-signal link")
-
-    redirs = int(beh.get("redirect_count") or 0)
-    if redirs >= 3:
-        score += 22
-        reasons.append(f"Multiple HTTP redirects ({redirs} hops)")
-    elif redirs >= 1 and beh.get("cross_domain_redirect"):
-        score += 26
-        reasons.append("Cross-domain redirect chain observed")
-
-    has_pwd = bool(beh.get("has_password_field"))
-    has_cred_inputs = bool(beh.get("has_credential_inputs"))
-    has_file = bool(beh.get("has_file_upload"))
-    ext_forms = beh.get("external_form_actions") or []
-    susp_forms = beh.get("suspicious_form_actions") or []
-    obf_hits = beh.get("script_obfuscation_hits") or []
-    hidden_iframes = int(beh.get("hidden_iframes") or 0)
-    urgency_hits = beh.get("urgency_keywords_found") or []
-
-    if has_pwd:
-        score += 28
-        reasons.append("Password input field detected on page")
-        if (
-            heur.get("risky_tld")
-            or heur.get("tunnel_or_cloud_host")
-            or heur.get("is_ip_host")
-            or len(ext_forms) > 0
-            or path_ctx.get("login_or_lure_tokens")
-            or path_ctx.get("brand_mismatch_tokens")
-            or dom_age.get("is_newly_registered")
-            or gib_subs
-        ):
-            score += 28
-            reasons.append("Password field paired with suspicious subdomain/host/domain age, deceptive path, or external form")
-    elif has_cred_inputs and (
-        heur.get("tunnel_or_cloud_host")
-        or heur.get("risky_tld")
-        or path_ctx.get("login_or_lure_tokens")
-        or gib_subs
-    ):
-        score += 24
-        reasons.append("Credential/account input fields present alongside suspicious host, subdomain, or lure path")
-
-    if has_file and (heur.get("risky_tld") or heur.get("tunnel_or_cloud_host") or len(ext_forms) > 0):
-        score += 32
-        reasons.append("File upload input on untrusted, tunnel/cloud, or external-form page")
-
-    if ext_forms:
-        score += 30
-        reasons.append("Form submits data to an external domain")
-    if susp_forms and (has_pwd or has_cred_inputs or has_file):
-        score += 20
-        reasons.append("Credential/sensitive form uses empty/anchor/JS/GET submission behavior")
-
-    if obf_hits:
-        score += min(34, len(obf_hits) * 11)
-        reasons.append(f"Obfuscation/evasion/redirect scripts: {', '.join(obf_hits[:4])}")
-
-    if hidden_iframes > 0:
-        score += min(30, hidden_iframes * 15)
-        reasons.append(f"{hidden_iframes} hidden iframe(s) embedded on page")
-
-    combined_txt = f"{text_data or ''} {beh.get('text_snippet') or ''}".lower()
-    if len(urgency_hits) >= 2:
-        score += 24
-        reasons.append("Urgency/verification/login social engineering language detected")
-    elif any(
-        w in combined_txt
-        for w in (
-            "otp", "pin", "cvv", "kyc update", "account blocked",
-            "pay now", "free skin", "claim reward", "download apk", "panel"
-        )
-    ):
-        score += 22
-        reasons.append("High-pressure credential, OTP, APK, or reward lure keywords detected")
-
-    dns_info = data.get("sender_dns_forensics") or {}
-    if dns_info.get("status") == "checked":
-        if not dns_info.get("has_mx"):
-            score += 25
-            reasons.append("Sender domain has no MX mail records")
-        if not dns_info.get("has_spf") and not dns_info.get("has_dmarc"):
-            score += 20
-            reasons.append("Sender domain lacks SPF and DMARC records")
-
-    final_score = max(0, min(100, int(score)))
-    if not reasons:
-        reasons.append("No shortener/wrapper/cloak anomalies, APK/cheat lures, shared-path risks, structural flaws, or live-page threats observed")
-    return final_score, reasons
+RISKY_TLDS = (
+    ".tk", ".ml", ".ga", ".cf", ".gq", ".xyz", ".top", ".cfd", ".sbs",
+    ".icu", ".click", ".link", ".work", ".zip", ".mov", ".rest", ".cam",
+    ".live", ".shop", ".online", ".site", ".website", ".pw", ".cc", ".buzz"
+)
+TUNNEL_AND_CLOUD_HOSTS = (
+    "ngrok", "ngrok-free", "trycloudflare", "loclx", "serveo", "localtunnel",
+    "pages.dev", "workers.dev", "supabase.co", "herokuapp.com", "000webhostapp.com",
+    "vercel.app", "netlify.app", "firebaseapp.com", "web.app", "duckdns.org",
+    "glitch.me", "replit.dev"
+)
+SCHEDULING_AND_FORM_HOSTS = (
+    "calendly.com", "cal.com", "savvycal.com", "hubspot.com", "typeform.com",
+    "jotform.com", "tally.so", "forms.gle", "docs.google.com", "calendly"
+)
+UGC_OR_PROFILE_HOSTS = (
+    "cake.me", "notion.site", "medium.com", "substack.com", "sites.google.com",
+    "docs.google.com", "weebly.com", "wixsite.com", "blogspot.com", "wordpress.com",
+    "github.io", "canva.site", "linktr.ee", "bio.link"
+)
+URL_SHORTENER_HOSTS = (
+    "ln.run", "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly",
+    "is.gd", "buff.ly", "adf.ly", "cutt.ly", "rb.gy", "shorturl.at",
+    "tiny.cc", "soo.gd", "clck.ru", "v.gd", "tr.im", "rebrand.ly"
+)
+LOGIN_LURE_TOKENS = (
+    "login", "signin", "sign-in", "log-in", "webmail", "mail-login", "att-mail",
+    "verify", "verification", "password", "reset", "auth", "oauth", "account",
+    "billing", "invoice", "update-kyc", "kyc", "unlock", "security-check",
+    "wallet", "claim", "trade", "session", "confirm", "recover", "portal"
+)
+APK_CHEAT_LURE_TOKENS = (
+    "apk", "panel", "mod", "cheat", "cheats", "hack", "hacks", "aimbot",
+    "headshot", "bypass", "crack", "cracked", "keygen", "injector", "script",
+    "freefire", "pubg", "bgmi", "diamond", "diamonds", "uc", "robux"
+)
+BRAND_IMPERSONATION_TOKENS = (
+    "microsoft", "office365", "outlook", "onedrive", "sharepoint", "google",
+    "gmail", "apple", "icloud", "amazon", "netflix", "paypal", "facebook",
+    "instagram", "whatsapp", "bank", "sbi", "hdfc", "icici", "att", "steam", "binance"
+)
+SMUGGLE_AND_TRACK_PARAMS = (
+    "referrer", "af_tranid", "click_id", "clickid", "subid", "aff_id", "pid",
+    "redirect_uri", "redirect_url", "next", "url", "dest", "destination",
+    "return_to", "continue", "goto", "token", "sid", "state", "code", "link", "to"
+)
+URGENCY_WORDS = (
+    "urgent", "immediately", "suspended", "verify your account", "kyc", "otp",
+    "password", "reset", "locked", "unauthorized", "refund", "prize", "won",
+    "invoice", "legal notice", "aadhaar", "pan", "cpf", "cnpj", "ssn", "card",
+    "confirm identity", "session expired", "sign in", "log in", "enter code",
+    "download apk", "free diamonds", "headshot", "aimbot", "panel"
+)
+COMMON_BENIGN_SUBDOMAINS = {
+    "www", "mail", "webmail", "login", "signin", "auth", "accounts", "account",
+    "admin", "portal", "api", "cdn", "static", "assets", "img", "images",
+    "media", "blog", "news", "shop", "store", "support", "help", "docs",
+    "dev", "staging", "test", "app", "m", "mobile", "cloud", "vpn", "sso"
+}
 
 
-def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
-    cleaned = (raw_text or "").strip()
-    if "```" in cleaned:
-        m = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
-        if m:
-            cleaned = m.group(0)
-    parsed = json.loads(cleaned)
+def calc_entropy(s: str) -> float:
+    if not s:
+        return 0.0
+    freq = {c: s.count(c) for c in set(s)}
+    length = len(s)
+    return round(-sum((n / length) * math.log2(n / length) for n in freq.values()), 2)
 
-    ai_raw = parsed.get("risk_score", deterministic_score)
+
+def is_gibberish_label(label: str) -> bool:
+    s = (label or "").strip().lower()
+    if len(s) < 6 or s in COMMON_BENIGN_SUBDOMAINS:
+        return False
+    alpha_only = re.sub(r"[^a-z]", "", s)
+    if len(alpha_only) < 5:
+        return False
+    vowels = sum(1 for c in alpha_only if c in "aeiou")
+    consonant_runs = len(re.findall(r"[bcdfghjklmnpqrstvwxyz]{4,}", alpha_only))
+    has_mixed_alnum = bool(re.search(r"[a-z]", s) and re.search(r"[0-9]", s)) and len(s) >= 7
+    low_vowel_ratio = vowels <= max(1, len(alpha_only) // 4)
+    high_label_entropy = calc_entropy(s) >= 2.75
+    return (
+        (high_label_entropy and low_vowel_ratio)
+        or consonant_runs >= 1
+        or (has_mixed_alnum and high_label_entropy)
+    )
+
+
+def is_ip_address(host: str) -> bool:
     try:
-        ai_score = max(0, min(100, int(float(ai_raw))))
+        socket.inet_aton(host)
+        return True
+    except OSError:
+        return False
+
+
+def get_domain_age_rdap(root_domain: str) -> dict:
+    info = {"checked": False, "age_days": None, "created_date": None, "is_newly_registered": False}
+    if not root_domain or is_ip_address(root_domain):
+        return info
+    try:
+        r = requests.get(
+            f"https://rdap.org/domain/{root_domain}",
+            timeout=2.5,
+            headers={"Accept": "application/rdap+json"}
+        )
+        if r.status_code == 200:
+            data = r.json() or {}
+            for ev in data.get("events") or []:
+                if ev.get("eventAction") == "registration" and ev.get("eventDate"):
+                    raw_dt = ev["eventDate"].replace("Z", "+00:00")
+                    created = datetime.fromisoformat(raw_dt)
+                    age_days = max(0, (datetime.now(timezone.utc) - created).days)
+                    info["checked"] = True
+                    info["age_days"] = age_days
+                    info["created_date"] = created.strftime("%Y-%m-%d")
+                    info["is_newly_registered"] = age_days <= 90
+                    break
     except Exception:
-        ai_score = deterministic_score
+        pass
+    return info
 
-    final_score = max(deterministic_score, int(round(0.68 * deterministic_score + 0.32 * ai_score)))
-    final_score = max(0, min(100, final_score))
-    tier = get_tier(final_score)
 
-    steps = parsed.get("how_to_stay_safe")
-    if not isinstance(steps, list) or not steps:
-        steps = [
-            "Do not type your password, OTP, or bank details on any page opened from an unexpected link—even if the main website name looks familiar.",
-            "If you want to check your account or download an app, close this page, open a fresh browser tab, and visit the official service directly."
-        ]
+def get_ssl_info(domain: str, port: int = 443) -> dict:
+    info = {"tls_valid": False, "issuer": None, "not_after": None}
+    if not domain or is_ip_address(domain):
+        return info
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((domain, port), timeout=2.5) as sock:
+            with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
+                cert = ssock.getpeercert()
+                info["tls_valid"] = True
+                info["not_after"] = cert.get("notAfter")
+                for tup in cert.get("issuer", ()):
+                    for k, v in tup:
+                        if k == "organizationName":
+                            info["issuer"] = v
+                            break
+    except Exception:
+        pass
+    return info
+
+
+def inspect_wrapper_and_cloak(target_url: str, host: str) -> dict:
+    once = unquote(target_url or "")
+    twice = unquote(once)
+    parsed = urlparse(target_url)
+    qs = parse_qs(parsed.query)
+
+    nested_urls = []
+    decoded_b64_urls = []
+
+    for _, vals in qs.items():
+        for v in vals:
+            u1 = unquote(v)
+            u2 = unquote(u1)
+            for candidate in (v, u1, u2):
+                if "http://" in candidate.lower() or "https://" in candidate.lower():
+                    nested_urls.append(candidate[:160])
+                cleaned_b64 = re.sub(r"[^A-Za-z0-9+/=_-]", "", candidate)
+                if len(cleaned_b64) >= 16:
+                    try:
+                        padded = cleaned_b64.replace("-", "+").replace("_", "/")
+                        padded += "=" * ((4 - len(padded) % 4) % 4)
+                        dec = base64.b64decode(padded, validate=False).decode("utf-8", errors="ignore")
+                        if any(tok in dec.lower() for tok in ("http://", "https://", "login", "signin", "verify", "oauth", "redirect")):
+                            decoded_b64_urls.append(dec[:140])
+                    except Exception:
+                        pass
+
+    path_and_frag = f"{parsed.path or ''}#{parsed.fragment or ''}"
+    for m in re.findall(r"https?://[^\s\"'<>]+", unquote(path_and_frag), flags=re.IGNORECASE):
+        nested_urls.append(m[:160])
+
+    external_wrapped_hosts = []
+    for nu in nested_urls + decoded_b64_urls:
+        nh = (urlparse(nu).hostname or "").lower()
+        if nh and host and not nh.endswith(host) and not host.endswith(nh):
+            external_wrapped_hosts.append(nh)
+
+    double_encoded = (twice != once) and ("%" in once)
 
     return {
-        "risk_score": final_score,
-        "classification": tier,
-        "what_was_detected": str(
-            parsed.get("what_was_detected")
-            or "Target analyzed for shortener/wrapper/cloak deception, APK/lure terms, shared paths, structural flaws, and live-page behavior."
-        ).strip(),
-        "why_suspicious": str(
-            parsed.get("why_suspicious")
-            or "Evaluated shortener/wrapped/nested targets, APK/cheat lures, legitimate-platform shells, domain age, and page behavior."
-        ).strip(),
-        "how_affects_user": str(
-            parsed.get("how_affects_user")
-            or "Assess malware, credential, session, and account risk before interacting with the target."
-        ).strip(),
-        "evidence": str(parsed.get("evidence") or f"Computed Risk Score: {final_score}/100").strip(),
-        "how_to_stay_safe": [str(s).strip() for s in steps[:3] if str(s).strip()]
+        "has_nested_wrapped_url": bool(nested_urls or decoded_b64_urls),
+        "nested_urls_found": nested_urls[:4],
+        "decoded_base64_lures": decoded_b64_urls[:3],
+        "external_wrapped_hosts": list(dict.fromkeys(external_wrapped_hosts))[:4],
+        "double_encoded_url": double_encoded,
+        "has_fragment_payload": bool(parsed.fragment and len(parsed.fragment) > 8)
     }
 
 
-def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = None):
-    if image_bytes and gemini_client:
-        for model_name in ["gemini-2.5-flash", "gemini-2.5-flash-lite"]:
-            try:
-                img = Image.open(io.BytesIO(image_bytes))
-                res = gemini_client.models.generate_content(
-                    model=model_name,
-                    contents=[prompt, img],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.0
-                    )
-                )
-                if res and res.text:
-                    return parse_ai_json(res.text, deterministic_score)
-            except Exception:
-                continue
-        return None
+def inspect_oauth_and_params(target_url: str, host: str) -> dict:
+    parsed = urlparse(target_url)
+    qs = parse_qs(parsed.query)
+    lower_url = target_url.lower()
+    query_lower = (parsed.query or "").lower()
 
-    if GROQ_KEY:
-        for gm in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
-            try:
-                r = requests.post(
-                    "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)",
-                    headers={
-                        "Authorization": f"Bearer {GROQ_KEY}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": gm,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.0,
-                        "response_format": {"type": "json_object"}
-                    },
-                    timeout=8
-                )
-                if r.status_code == 200:
-                    choices = r.json().get("choices") or []
-                    if choices:
-                        content = (choices[0].get("message") or {}).get("content")
-                        if content:
-                            return parse_ai_json(content, deterministic_score)
-            except Exception:
-                continue
+    is_oauth = any(k in lower_url for k in ("/oauth2/", "/authorize", "client_id=", "response_type="))
+    redirect_targets = []
+    for key in (
+        "redirect_uri", "redirect_url", "next", "url", "dest", "destination",
+        "return_to", "continue", "r", "target", "goto", "referrer", "link", "to"
+    ):
+        for val in qs.get(key, []):
+            redirect_targets.append(unquote(val))
 
-    if OPENROUTER_KEY:
-        for orm in ["meta-llama/llama-3.3-70b-instruct:free", "google/gemma-3-27b-it:free"]:
-            try:
-                r = requests.post(
-                    "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)",
-                    headers={
-                        "Authorization": f"Bearer {OPENROUTER_KEY}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": orm,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0.0
-                    },
-                    timeout=8
-                )
-                if r.status_code == 200:
-                    choices = r.json().get("choices") or []
-                    if choices:
-                        content = (choices[0].get("message") or {}).get("content")
-                        if content:
-                            return parse_ai_json(content, deterministic_score)
-            except Exception:
-                continue
+    external_redirects = []
+    suspicious_param_values = []
+    for rt in redirect_targets:
+        rt_lower = rt.lower()
+        if rt_lower.startswith(("javascript:", "data:", "vbscript:")):
+            suspicious_param_values.append(rt[:120])
+            continue
+        rt_host = (urlparse(rt).hostname or "").lower()
+        if rt_host and host and not rt_host.endswith(host) and not host.endswith(rt_host):
+            external_redirects.append(rt[:160])
 
-    if gemini_client:
-        for model_name in ["gemini-2.5-flash", "gemini-2.5-flash-lite"]:
-            try:
-                res = gemini_client.models.generate_content(
-                    model=model_name,
-                    contents=[prompt],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.0
-                    )
-                )
-                if res and res.text:
-                    return parse_ai_json(res.text, deterministic_score)
-            except Exception:
-                continue
-
-    return None
-
-
-def fallback_forensics(content_type: str, text_data: str, intel: dict, score: int, reasons: list[str]) -> dict:
-    tier = get_tier(score)
-    report = intel if "behaviour" in intel else next(iter(intel.get("embedded_urls_intel") or []), {})
-    heur = report.get("heuristics") or {}
-    beh = report.get("behaviour") or {}
-    ssl_info = heur.get("ssl") or {}
-    path_ctx = heur.get("path_context") or {}
-    dom_age = heur.get("domain_age") or {}
-
-    domain = heur.get("domain") or "Target Payload"
-    proto = heur.get("protocol") or "N/A"
-    final_url = beh.get("final_url") or text_data or "N/A"
-    title = beh.get("title") or "Protected / JS-rendered / wrapped page"
-    redirects = int(beh.get("redirect_count") or 0)
-    tls_ok = ssl_info.get("tls_valid")
-    age_str = f"{dom_age.get('age_days')} days" if dom_age.get("age_days") is not None else "Unknown"
-
-    if tier == "SAFE":
-        what_detected = (
-            f"Inspected {content_type} targeting '{domain}' ({proto}, age: {age_str}) with {redirects} redirect(s); "
-            f"page title reported as '{title}'."
+    scopes_raw = " ".join(qs.get("scope", [])).lower()
+    risky_scopes = [
+        s for s in (
+            "mail.read", "mail.send", "mail.readwrite", "files.read", "files.readwrite",
+            "offline_access", "user.readwrite", "contacts.read", "mailboxsettings"
         )
-        why_text = (
-            f"No URL shortener masking, wrapped/nested external destinations, APK/mod/cheat lures, deceptive login/OAuth paths, "
-            f"gibberish subdomains, fresh-domain red flags, credential forms, or obfuscated scripts were observed. "
-            f"{'HTTPS TLS certificate check succeeded.' if proto == 'HTTPS' and tls_ok else 'Observed transport and structure appear normal.'}"
-        )
-        impact_text = (
-            "Low immediate threat based on behavioral, wrapper, and structural checks. "
-            "Always verify domain spelling and official sources before downloading files or entering credentials."
-        )
-        evidence_text = f"Domain: {domain} | Age: {age_str} | Protocol: {proto} | TLS: {tls_ok} | Risk Score: {score}/100"
-        safe_steps = [
-            "This link currently looks clean, so you can browse normally—just double-check the website spelling in your browser bar before typing any password.",
-            "Never share your OTP, PIN, or password or install unverified APK files if any page asks for urgent action."
-        ]
-    else:
-        what_detected = (
-            f"Shield inspection of {content_type} targeting '{domain}' ({proto}, age: {age_str}) "
-            f"flagged shortener/APK/lure, shared-path, structural, subdomain/path, wrapper, or live-page risk signals (HTTP: {beh.get('http_status') or 'Blocked/Timeout'}, redirects: {redirects})."
-        )
-        why_text = (
-            f"{'; '.join(reasons)}. Attackers frequently hide phishing or scam lures behind URL shorteners, legitimate-looking domains, "
-            f"user-created/shared paths, randomized subdomains, wrapped links, or anti-bot challenges so surface appearance does not tell the whole story."
-        )
-        impact_text = (
-            "High risk of malware/spyware infection, credential theft, session hijacking, account takeover, or deceptive redirection "
-            "if you trust the short/outer link blindly, download files, or enter sensitive details."
-        )
-        evidence_text = (
-            f"Score: {score}/100 | Host: {domain} | Shortener: {path_ctx.get('is_url_shortener')} | "
-            f"Shared Path: {path_ctx.get('has_shared_user_path')} | Final URL: {final_url}"
-        )
-        safe_steps = [
-            "Stop and do NOT enter your password, OTP, card number, or download files/updates from this page, even if the link looks short or familiar.",
-            "Close this tab, open a fresh browser window, and go directly to the official website or app on your own to verify anything."
-        ]
-
-    return {
-        "risk_score": score,
-        "classification": tier,
-        "what_was_detected": what_detected,
-        "why_suspicious": why_text,
-        "how_affects_user": impact_text,
-        "evidence": evidence_text,
-        "how_to_stay_safe": safe_steps
-    }
-
-
-def _cleanup_cache():
-    now = time.time()
-    expired = [k for k, (ts, _) in RESULT_CACHE.items() if now - ts > CACHE_TTL_SECONDS]
-    for k in expired:
-        RESULT_CACHE.pop(k, None)
-    if len(RESULT_CACHE) > MAX_CACHE_ITEMS:
-        oldest_keys = sorted(RESULT_CACHE.keys(), key=lambda k: RESULT_CACHE[k][0])[: len(RESULT_CACHE) - MAX_CACHE_ITEMS]
-        for k in oldest_keys:
-            RESULT_CACHE.pop(k, None)
-
-
-def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = None, extra_intel: dict = None) -> dict:
-    _cleanup_cache()
-    intel = extra_intel or {}
-    img_hash = hashlib.sha256(image_bytes).hexdigest() if image_bytes else "no_img"
-    cache_key = hashlib.sha256(
-        f"{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
-    ).hexdigest()
-
-    cached = RESULT_CACHE.get(cache_key)
-    if cached and (time.time() - cached[0]) <= CACHE_TTL_SECONDS:
-        return cached[1]
-
-    det_score, reasons = compute_behavioral_score(content_type, text_data, intel)
-    compact_intel = json.dumps(intel, default=str)[:6000]
-
-    prompt = f"""
-You are a Principal Digital Forensics & Anti-Phishing Analyst for ScamSense.
-Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, URL shortener/APK/cheat/mod lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect/bot-challenge behavior, and user input.
-Never treat a link as safe solely because the outer root domain is well-known or uses a URL shortener—phishing and scam campaigns often hide behind short links, legitimate platforms, user-created paths, dynamic scripts, redirects, or wrapped parameters.
-Do not invent facts not present in the telemetry, and do not mention internal AI model names.
-
-Content Type: {content_type}
-User Input: {(text_data or "")[:1500]}
-Computed Baseline Score: {det_score}/100
-Observed Signals: {reasons}
-Telemetry JSON: {compact_intel}
-
-Strict Tiers: 0-30 = SAFE, 31-60 = SUSPICIOUS, 61-100 = HIGH RISK.
-Return ONLY valid JSON:
-{{
-    "risk_score": <integer 0-100 consistent with observed evidence>,
-    "classification": "<SAFE HIGH RISK SUSPICIOUS |>",
-    "what_was_detected": "<2-3 clear sentences detailing the outer/short target, shared/user path, APK/lure or subdomain/path anomalies, wrapped/encoded elements, domain age, and page behavior>",
-    "why_suspicious": "<3-4 clear sentences explaining concrete signals and how attackers hide traps behind shorteners, legitimate shells, or dynamic pages>",
-    "how_affects_user": "<2-3 clear sentences on real-world impact to device security, credentials, accounts, or data>",
-    "evidence": "<Concise age, domain, redirects/scripts, shortener/shared-path/apk/cheat/gibberish/wrapper/params/path, technical telemetry>",
-    "how_to_stay_safe": [
-        "<Clear, plain-English instruction for a non-technical everyday user explaining what NOT to do right now and why>",
-        "<Simple, step-by-step safe alternative action they should take instead>"
+        if s in scopes_raw
     ]
-}}
-"""
 
-    ai_result = run_ai_pipeline(prompt, det_score, image_bytes=image_bytes)
-    final_result = ai_result or fallback_forensics(content_type, text_data, intel, det_score, reasons)
+    smuggle_hits = [p for p in SMUGGLE_AND_TRACK_PARAMS if p in query_lower]
+    has_base64_blob = bool(re.search(r"(?:[A-Za-z0-9+/]{20,}(?:==|=|%3D%3D|%3D))", parsed.query or ""))
 
-    RESULT_CACHE[cache_key] = (time.time(), final_result)
-    return final_result
+    return {
+        "is_oauth_or_auth_flow": is_oauth,
+        "has_truncated_ellipsis": "..." in target_url or "…" in target_url,
+        "external_redirect_params": external_redirects,
+        "suspicious_param_values": suspicious_param_values,
+        "risky_oauth_scopes": risky_scopes,
+        "smuggle_or_affiliate_params": smuggle_hits,
+        "has_base64_query_blob": has_base64_blob,
+        "query_param_count": len(qs)
+    }
+
+
+def inspect_path_and_deception(target_url: str, host: str, root_dom: str) -> dict:
+    parsed = urlparse(target_url)
+    path_str = (parsed.path or "").lower()
+    query_str = (parsed.query or "").lower()
+    host_path_q = f"{host} {path_str} {query_str}"
+
+    lure_hits = [tok for tok in LOGIN_LURE_TOKENS if tok in f"{path_str} {query_str}"]
+    apk_cheat_hits = [tok for tok in APK_CHEAT_LURE_TOKENS if tok in host_path_q]
+
+    is_ugc_host = any(h in host for h in UGC_OR_PROFILE_HOSTS)
+    is_tunnel_or_cloud = any(h in host for h in TUNNEL_AND_CLOUD_HOSTS)
+    is_scheduling_or_form = any(h in host for h in SCHEDULING_AND_FORM_HOSTS)
+    is_shortener = any(h == host or host.endswith("." + h) for h in URL_SHORTENER_HOSTS)
+
+    path_segments = [seg for seg in path_str.split("/") if seg]
+    has_shared_user_path = bool((is_scheduling_or_form or is_ugc_host) and len(path_segments) >= 1)
+    has_short_code = bool(is_shortener and len(path_segments) >= 1)
+
+    brand_hits = [
+        b for b in BRAND_IMPERSONATION_TOKENS
+        if (b in host or b in path_str) and (b not in root_dom)
+    ]
+
+    has_double_dash_trick = "--" in host or "---" in path_str
+    encoded_percent_count = len(re.findall(r"%[0-9a-fA-F]{2}", target_url))
+    gibberish_path_segments = [seg for seg in path_segments if is_gibberish_label(seg)]
+
+    return {
+        "login_or_lure_tokens": lure_hits[:6],
+        "apk_or_cheat_lure_tokens": apk_cheat_hits[:6],
+        "is_ugc_or_profile_host": is_ugc_host,
+        "is_tunnel_or_cloud_host": is_tunnel_or_cloud,
+        "is_scheduling_or_form_host": is_scheduling_or_form,
+        "is_url_shortener": is_shortener,
+        "has_short_code": has_short_code,
+        "has_shared_user_path": has_shared_user_path,
+        "lure_on_ugc_or_profile_path": bool(lure_hits and is_ugc_host),
+        "lure_on_tunnel_or_cloud_host": bool(lure_hits and is_tunnel_or_cloud),
+        "brand_mismatch_tokens": brand_hits[:5],
+        "has_double_dash_trick": has_double_dash_trick,
+        "encoded_percent_count": encoded_percent_count,
+        "gibberish_path_segments": gibberish_path_segments[:4]
+    }
+
+
+def fetch_live_behaviour(target: str, root_dom: str) -> dict:
+    behaviour = {
+        "final_url": target,
+        "http_status": None,
+        "bot_blocked_or_evasive": False,
+        "sparse_or_js_page": False,
+        "redirect_count": 0,
+        "redirect_chain": [],
+        "cross_domain_redirect": False,
+        "meta_refresh_detected": False,
+        "title": "",
+        "text_snippet": "",
+        "has_password_field": False,
+        "has_credential_inputs": False,
+        "has_file_upload": False,
+        "external_form_actions": [],
+        "suspicious_form_actions": [],
+        "script_obfuscation_hits": [],
+        "hidden_iframes": 0,
+        "urgency_keywords_found": []
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
+    try:
+        resp = requests.get(target, headers=headers, timeout=3.5, allow_redirects=True)
+        behaviour["http_status"] = resp.status_code
+        behaviour["final_url"] = resp.url
+
+        if resp.status_code in (403, 429, 503):
+            behaviour["bot_blocked_or_evasive"] = True
+
+        chain = [h.url for h in resp.history] + [resp.url]
+        behaviour["redirect_chain"] = chain[:8]
+        behaviour["redirect_count"] = len(resp.history)
+
+        final_host = (urlparse(resp.url).hostname or "").lower()
+        final_parts = [p for p in final_host.split(".") if p]
+        final_root = f"{final_parts[-2]}.{final_parts[-1]}" if len(final_parts) >= 2 else final_host
+        if root_dom and final_root and root_dom != final_root:
+            behaviour["cross_domain_redirect"] = True
+
+        content_type = resp.headers.get("Content-Type", "").lower()
+        if "text/html" in content_type and resp.text:
+            html_chunk = resp.text[:130000]
+            soup = BeautifulSoup(html_chunk, "html.parser")
+
+            if soup.title and soup.title.string:
+                behaviour["title"] = soup.title.string.strip()[:100]
+
+            meta_ref = soup.find("meta", attrs={"http-equiv": re.compile(r"^refresh$", re.I)})
+            if meta_ref:
+                behaviour["meta_refresh_detected"] = True
+
+            lower_all_check = f"{behaviour['title']} {html_chunk}".lower()
+            if any(w in lower_all_check for w in (
+                "just a moment", "cf-browser-verification", "attention required",
+                "access denied", "enable javascript", "checking your browser"
+            )):
+                behaviour["bot_blocked_or_evasive"] = True
+
+            script_tags = soup.find_all("script")
+            script_blob = "\n".join((s.get_text(" ") or "") for s in script_tags)[:45000]
+            obf_patterns = [
+                (r"eval\s*\(", "eval()"),
+                (r"unescape\s*\(", "unescape()"),
+                (r"fromCharCode", "String.fromCharCode"),
+                (r"atob\s*\(", "atob() base64 decode"),
+                (r"document\.write\s*\(", "document.write()"),
+                (r"oncontextmenu\s*=|preventDefault\(\)", "context-menu/event block"),
+                (r"window\.location\s*=|location\.replace\s*\(|location\.href\s*=|window\.open\s*\(", "JS redirect/popup")
+            ]
+            for pat, label in obf_patterns:
+                if re.search(pat, script_blob, re.IGNORECASE):
+                    behaviour["script_obfuscation_hits"].append(label)
+
+            for iframe in soup.find_all("iframe"):
+                style_attr = (iframe.get("style") or "").lower().replace(" ", "")
+                w = str(iframe.get("width") or "").strip()
+                h = str(iframe.get("height") or "").strip()
+                if "display:none" in style_attr or "visibility:hidden" in style_attr or "opacity:0" in style_attr or w in ("0", "1") or h in ("0", "1"):
+                    behaviour["hidden_iframes"] += 1
+
+            for form in soup.find_all("form"):
+                action = (form.get("action") or "").strip()
+                method = (form.get("method") or "get").strip().lower()
+                if action.startswith(("http://", "https://")):
+                    act_host = (urlparse(action).hostname or "").lower()
+                    if root_dom and root_dom not in act_host:
+                        behaviour["external_form_actions"].append(action[:120])
+                elif action in ("", "#") or action.lower().startswith("javascript:"):
+                    behaviour["suspicious_form_actions"].append(action or "<empty>")
+                if method == "get" and (form.find("input", {"type": re.compile(r"password|email", re.I)}) or re.search(r"pass|login|user|otp", str(form), re.I)):
+                    behaviour["suspicious_form_actions"].append("GET method on login/credential form")
+
+            behaviour["has_password_field"] = bool(soup.find("input", {"type": re.compile(r"^password$", re.I)}))
+            cred_input_hits = False
+            for inp in soup.find_all("input"):
+                attrs_blob = f"{inp.get('type') or ''} {inp.get('name') or ''} {inp.get('id') or ''} {inp.get('placeholder') or ''}".lower()
+                if any(k in attrs_blob for k in ("password", "pass", "email", "username", "user_id", "otp", "pin", "cvv", "card")):
+                    cred_input_hits = True
+                    break
+            behaviour["has_credential_inputs"] = behaviour["has_password_field"] or cred_input_hits
+            behaviour["has_file_upload"] = bool(soup.find("input", {"type": re.compile(r"^file$", re.I)}))
+
+            for tag in soup(["script", "style", "noscript"]):
+                tag.decompose()
+
+            clean_text = re.sub(r"\s+", " ", soup.get_text(" ")).strip()
+            behaviour["text_snippet"] = clean_text[:1500]
+            if len(clean_text) < 120 and len(script_tags) >= 1:
+                behaviour["sparse_or_js_page"] = True
+
+            lower_all = f"{behaviour['title']} {clean_text}".lower()
+            behaviour["urgency_keywords_found"] = [kw for kw in URGENCY_WORDS if kw in lower_all][:8]
+
+    except Exception as e:
+        behaviour["fetch_error"] = str(e)[:120]
+        behaviour["bot_blocked_or_evasive"] = True
+
+    return behaviour
+
+
+def check_gsb(urls: list) -> dict:
+    if not GSB_API_KEY:
+        return {"checked": False, "is_dangerous": False, "threat_type": None}
+    unique_urls = [u for u in set(urls) if u]
+    if not unique_urls:
+        return {"checked": False, "is_dangerous": False, "threat_type": None}
+    try:
+        endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GSB_API_KEY}"
+        payload = {
+            "client": {"clientId": "scamsense-soc", "clientVersion": "9.7"},
+            "threatInfo": {
+                "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
+                "platformTypes": ["ANY_PLATFORM"],
+                "threatEntryTypes": ["URL"],
+                "threatEntries": [{"url": u} for u in unique_urls]
+            }
+        }
+        r = requests.post(endpoint, json=payload, timeout=3)
+        if r.status_code == 200:
+            matches = r.json().get("matches") or []
+            if matches:
+                return {"checked": True, "is_dangerous": True, "threat_type": matches[0].get("threatType", "MALICIOUS")}
+            return {"checked": True, "is_dangerous": False, "threat_type": None}
+    except Exception:
+        pass
+    return {"checked": False, "is_dangerous": False, "threat_type": None}
+
+
+def check_vt(target_url: str) -> dict:
+    if not VT_API_KEY or not target_url:
+        return {"checked": False, "malicious": 0, "suspicious": 0}
+    try:
+        url_id = base64.urlsafe_b64encode(target_url.encode()).decode().strip("=")
+        endpoint = f"https://www.virustotal.com/api/v3/urls/{url_id}"
+        r = requests.get(endpoint, headers={"x-apikey": VT_API_KEY}, timeout=3)
+        if r.status_code == 200:
+            stats = r.json().get("data", {}).get("attributes", {}).get("last_analysis_stats", {}) or {}
+            return {
+                "checked": True,
+                "malicious": int(stats.get("malicious", 0)),
+                "suspicious": int(stats.get("suspicious", 0))
+            }
+    except Exception:
+        pass
+    return {"checked": False, "malicious": 0, "suspicious": 0}
+
+
+def check_urlhaus(target_url: str) -> dict:
+    if not target_url:
+        return {"checked": False, "listed": False, "threat": None}
+    try:
+        r = requests.post("https://urlhaus-api.abuse.ch/v1/url/", data={"url": target_url}, timeout=3)
+        if r.status_code == 200:
+            data = r.json() or {}
+            if data.get("query_status") == "ok":
+                return {"checked": True, "listed": True, "threat": data.get("threat") or "malware_url"}
+            return {"checked": True, "listed": False, "threat": None}
+    except Exception:
+        pass
+    return {"checked": False, "listed": False, "threat": None}
+
+
+def check_email_domain_dns(sender: str) -> dict:
+    if not sender or "@" not in sender:
+        return {"status": "no_sender", "sender_domain": None, "has_mx": False, "has_spf": False, "has_dmarc": False}
+    dom = sender.split("@")[-1].strip().lower()
+    rep = {"status": "checked", "sender_domain": dom, "has_mx": False, "has_spf": False, "has_dmarc": False}
+    try:
+        rep["has_mx"] = len(dns.resolver.resolve(dom, "MX", lifetime=2)) > 0
+    except Exception:
+        pass
+    try:
+        txts = [str(r).lower() for r in dns.resolver.resolve(dom, "TXT", lifetime=2)]
+        rep["has_spf"] = any("v=spf1" in t for t in txts)
+    except Exception:
+        pass
+    try:
+        dmarc_txts = [str(r).lower() for r in dns.resolver.resolve(f"_dmarc.{dom}", "TXT", lifetime=2)]
+        rep["has_dmarc"] = any("v=dmarc1" in t for t in dmarc_txts)
+    except Exception:
+        pass
+    return rep
+
+
+def analyze_url_deep(url: str) -> dict:
+    decoded = unquote((url or "").strip())
+    target = decoded if decoded.startswith(("http://", "https://")) else "http://" + decoded
+    parsed = urlparse(target)
+    host = (parsed.hostname or "").lower()
+    parts = [p for p in host.split(".") if p]
+    root_dom = f"{parts[-2]}.{parts[-1]}" if len(parts) >= 2 else host
+
+    subdomain_labels = parts[:-2] if len(parts) > 2 else []
+    gibberish_subs = [lbl for lbl in subdomain_labels if is_gibberish_label(lbl)]
+
+    behaviour = fetch_live_behaviour(target, root_dom)
+    final_u = behaviour.get("final_url") or target
+
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        f_rdap = ex.submit(get_domain_age_rdap, root_dom)
+        f_gsb = ex.submit(check_gsb, [target, final_u])
+        f_vt = ex.submit(check_vt, final_u)
+        f_uh = ex.submit(check_urlhaus, final_u)
+        f_ssl = ex.submit(get_ssl_info, host)
+
+        rdap_res = f_rdap.result(timeout=3.5) if f_rdap else {"checked": False, "age_days": None, "created_date": None, "is_newly_registered": False}
+        gsb_res = f_gsb.result(timeout=3.5) if f_gsb else {"checked": False, "is_dangerous": False, "threat_type": None}
+        vt_res = f_vt.result(timeout=3.5) if f_vt else {"checked": False, "malicious": 0, "suspicious": 0}
+        uh_res = f_uh.result(timeout=3.5) if f_uh else {"checked": False, "listed": False, "threat": None}
+        ssl_res = f_ssl.result(timeout=3.5) if f_ssl else {"tls_valid": False, "issuer": None, "not_after": None}
+
+    heuristics = {
+        "protocol": parsed.scheme.upper(),
+        "domain": host,
+        "root_domain": root_dom,
+        "domain_age": rdap_res,
+        "is_ip_host": is_ip_address(host),
+        "is_punycode": "xn--" in host,
+        "subdomain_count": len(subdomain_labels),
+        "gibberish_subdomains": gibberish_subs[:4],
+        "has_gibberish_subdomain": bool(gibberish_subs),
+        "has_at_trap": "@" in (parsed.netloc or ""),
+        "risky_tld": any(host.endswith(tld) for tld in RISKY_TLDS),
+        "tunnel_or_cloud_host": any(h in host for h in TUNNEL_AND_CLOUD_HOSTS),
+        "url_entropy": calc_entropy(target),
+        "path_length": len(parsed.path or ""),
+        "ssl": ssl_res,
+        "wrapper_cloak": inspect_wrapper_and_cloak(target, host),
+        "oauth_analysis": inspect_oauth_and_params(target, host),
+        "path_context": inspect_path_and_deception(target, host, root_dom)
+    }
+
+    return {
+        "input_url": url,
+        "normalized_url": target,
+        "heuristics": heuristics,
+        "behaviour": behaviour,
+        "google_safe_browsing": gsb_res,
+        "virustotal": vt_res,
+        "urlhaus_threat_feed": uh_res
+    }
