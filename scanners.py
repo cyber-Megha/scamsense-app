@@ -36,7 +36,7 @@ def _clean_decoded_payload(raw: str | None) -> str | None:
     cleaned = raw.strip()
     if not cleaned or cleaned.upper() in ("NONE", "NULL", "N/A"):
         return None
-    if cleaned.startswith(("http://", "https://", "www.")):
+    if cleaned.startswith(("http://", "https://", "www.", "upi://", "mailto:", "tel:", "sms:")):
         return cleaned.split()[0].strip()
     return cleaned
 
@@ -45,17 +45,19 @@ def _build_image_variants(file_bytes: bytes) -> list[Image.Image]:
     pil_img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
     bordered = ImageOps.expand(pil_img, border=48, fill="white")
     gray = ImageOps.grayscale(bordered)
+    inverted = ImageOps.invert(gray)
     high_contrast = ImageEnhance.Contrast(gray).enhance(1.8)
     sharp = ImageEnhance.Sharpness(high_contrast).enhance(2.0)
 
-    variants = [pil_img, bordered, gray, high_contrast, sharp]
+    variants = [pil_img, bordered, gray, inverted, high_contrast, sharp]
 
-    try:
-        arr_gray = np.array(gray)
-        _, otsu = cv2.threshold(arr_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        variants.append(Image.fromarray(otsu).convert("RGB"))
-    except Exception:
-        pass
+    for base in (gray, inverted):
+        try:
+            arr_g = np.array(base)
+            _, otsu = cv2.threshold(arr_g, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            variants.append(Image.fromarray(otsu).convert("RGB"))
+        except Exception:
+            pass
 
     for scale in (1.5, 0.75, 2.0):
         w, h = bordered.size
@@ -85,25 +87,27 @@ def _decode_with_pyzbar(variants: list[Image.Image]) -> str | None:
 def _decode_with_cv2(variants: list[Image.Image]) -> str | None:
     detector = cv2.QRCodeDetector()
     for img in variants:
-        try:
-            arr = np.array(img.convert("RGB"))
-            data, _, _ = detector.detectAndDecode(arr)
-            clean = _clean_decoded_payload(data)
-            if clean:
-                return clean
-        except Exception:
-            pass
+        for angle in (0, 90, 180, 270):
+            rotated = img.rotate(angle, expand=True) if angle else img
+            try:
+                arr = np.array(rotated.convert("RGB"))
+                data, _, _ = detector.detectAndDecode(arr)
+                clean = _clean_decoded_payload(data)
+                if clean:
+                    return clean
+            except Exception:
+                pass
 
-        try:
-            arr = np.array(img.convert("RGB"))
-            retval, decoded_info, _, _ = detector.detectAndDecodeMulti(arr)
-            if retval and decoded_info:
-                for item in decoded_info:
-                    clean = _clean_decoded_payload(item)
-                    if clean:
-                        return clean
-        except Exception:
-            pass
+            try:
+                arr = np.array(rotated.convert("RGB"))
+                retval, decoded_info, _, _ = detector.detectAndDecodeMulti(arr)
+                if retval and decoded_info:
+                    for item in decoded_info:
+                        clean = _clean_decoded_payload(item)
+                        if clean:
+                            return clean
+            except Exception:
+                pass
 
     return None
 
@@ -119,7 +123,7 @@ def _decode_with_gemini_vision(file_bytes: bytes) -> str | None:
                 contents=[
                     (
                         "Read the QR code in this image with exact character-for-character accuracy. "
-                        "Return ONLY the exact raw decoded string/URL without markdown, quotes, or explanation. "
+                        "Return ONLY the exact raw decoded string/URL/URI without markdown, quotes, or explanation. "
                         "If no readable QR code is present, return strictly NONE."
                     ),
                     img
@@ -128,9 +132,13 @@ def _decode_with_gemini_vision(file_bytes: bytes) -> str | None:
             )
             clean = _clean_decoded_payload(getattr(response, "text", None))
             if clean:
-                url_match = re.search(r"https?://[^\s<>\"']+|www\.[^\s<>\"']+", clean)
-                if url_match:
-                    return url_match.group(0).rstrip(".,;:!?)]}>\"'")
+                uri_match = re.search(
+                    r"(?:https?://|www\.|upi://|mailto:|tel:|sms:)[^\s<>\"']+",
+                    clean,
+                    flags=re.IGNORECASE
+                )
+                if uri_match:
+                    return uri_match.group(0).rstrip(".,;:!?)]}>\"'")
                 lines = [ln.strip() for ln in clean.splitlines() if ln.strip()]
                 if lines:
                     return lines[0]
