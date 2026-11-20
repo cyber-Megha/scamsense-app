@@ -12,7 +12,7 @@ GEMINI_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
 GROQ_KEY = (os.getenv("GROQ_API_KEY") or "").strip()
 OPENROUTER_KEY = (os.getenv("OPENROUTER_API_KEY") or "").strip()
 
-gemini_client = genai.Client(api_key=GEMINI_KEY, http_options={"timeout": 15.0}) if GEMINI_KEY else None
+gemini_client = genai.Client(api_key=GEMINI_KEY, http_options={"timeout": 22.0}) if GEMINI_KEY else None
 
 RESULT_CACHE = {}
 CACHE_TTL_SECONDS = 300
@@ -35,7 +35,7 @@ def _extract_email_from_text(txt: str) -> str:
 
 def _prepare_image_for_vision(image_bytes: bytes) -> Image.Image:
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    max_dim = 1280
+    max_dim = 1024
     w, h = img.size
     if max(w, h) > max_dim:
         scale = max_dim / float(max(w, h))
@@ -595,12 +595,18 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
             "HTTP file hosting/directory listing of executables or bypass/exploit scripts, or suspicious command activity, "
             "assign SUSPICIOUS (45-60) or HIGH RISK (65-95) and state the exact observed filenames/commands."
         )
-        for model_name in ["gemini-2.5-flash", "gemini-2.5-flash-lite"]:
+        prepared_img = None
+        try:
+            prepared_img = _prepare_image_for_vision(image_bytes)
+        except Exception as exc:
+            print(f"[ScamSense Vision Prep Error] {exc}")
+            return None
+
+        for model_name in ["gemini-2.5-flash-lite", "gemini-2.5-flash"]:
             try:
-                img = _prepare_image_for_vision(image_bytes)
                 res = gemini_client.models.generate_content(
                     model=model_name,
-                    contents=[image_prompt, img],
+                    contents=[image_prompt, prepared_img],
                     config={"temperature": 0.0}
                 )
                 raw_txt = getattr(res, "text", None)
@@ -682,7 +688,7 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
 def fallback_forensics(content_type: str, text_data: str, intel: dict, score: int, reasons: list[str], is_image: bool = False) -> dict:
     if is_image and score < 42:
         score = 42
-        reasons = list(reasons) + ["Vision analysis unavailable—uploaded screenshot requires manual verification for commands, files, or payloads"]
+        reasons = list(reasons) + ["Vision analysis timed out or was unavailable—uploaded screenshot requires verification for commands, files, or payloads"]
 
     tier = get_tier(score)
     email_src = (intel or {}).get("source_email_forensics") or {}
@@ -828,7 +834,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
     intel = extra_intel or {}
     img_hash = hashlib.sha256(image_bytes).hexdigest() if image_bytes else "no_img"
     cache_key = hashlib.sha256(
-        f"v5.6:{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
+        f"v5.7:{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
     ).hexdigest()
 
     cached = RESULT_CACHE.get(cache_key)
