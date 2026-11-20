@@ -202,6 +202,21 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
             f"Login/verification/account lure keyword in target ({auth_lure_hits[0]})"
         )
 
+    payment_upi_tokens = (
+        "upi://", "gpay", "phonepe", "paytm", "bhim", "upi",
+        "refund", "cashback", "collect", "mandate", "bank", "invoice", "payment"
+    )
+    payment_upi_hits = [tok for tok in payment_upi_tokens if tok in full_target_blob]
+    if "upi://" in full_target_blob:
+        score += 42
+        reasons.append("Direct UPI payment URI detected in payload—verify recipient and amount carefully before proceeding")
+    elif len(payment_upi_hits) >= 2:
+        score += 32
+        reasons.append(f"Payment/UPI/refund/bank lure keywords detected ({', '.join(payment_upi_hits[:4])})")
+    elif len(payment_upi_hits) == 1:
+        score += 22
+        reasons.append(f"Payment/UPI/refund lure keyword detected ({payment_upi_hits[0]})")
+
     if path_ctx.get("has_short_code"):
         score += 32
         reasons.append(
@@ -258,15 +273,22 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 16
         reasons.append("High-entropy / randomized path string")
 
+    has_any_lure = bool(scam_lure_hits or auth_lure_hits or payment_upi_hits or path_ctx.get("login_or_lure_tokens"))
+
     if heur.get("protocol") == "HTTP" and not heur.get("is_ip_host"):
         score += 20
         reasons.append("Unencrypted HTTP transport")
-        if scam_lure_hits or auth_lure_hits or int(heur.get("subdomain_count") or 0) >= 2:
+        if has_any_lure or int(heur.get("subdomain_count") or 0) >= 2:
             score += 14
-            reasons.append("Unencrypted HTTP combined with login/verification/scam lure or multi-level subdomain")
+            reasons.append("Unencrypted HTTP combined with lure keywords or multi-level subdomain")
     elif heur.get("protocol") == "HTTPS" and heur.get("domain") and not ssl_info.get("tls_valid"):
         score += 28
         reasons.append("TLS certificate verification failed")
+
+    # If live fetch returned no status / blocked / empty content AND target has lures or subdomains/hyphens
+    if (beh.get("http_status") in (None, 0) or beh.get("bot_blocked_or_evasive")) and has_any_lure:
+        score += 14
+        reasons.append("Live page unreachable or protected while payload contains lure/verification/payment keywords")
 
     if beh.get("sparse_or_js_page"):
         score += 26
@@ -375,11 +397,11 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         w in combined_txt
         for w in (
             "otp", "pin", "cvv", "kyc update", "account blocked",
-            "pay now", "free skin", "claim reward", "download apk", "panel"
+            "pay now", "free skin", "claim reward", "download apk", "panel", "upi"
         )
     ):
         score += 22
-        reasons.append("High-pressure credential, OTP, APK, or reward lure keywords detected")
+        reasons.append("High-pressure credential, OTP, APK, UPI, or reward lure keywords detected")
 
     dns_info = data.get("sender_dns_forensics") or {}
     if dns_info.get("status") == "checked":
@@ -461,7 +483,7 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
             "otp", "pin", "cvv", "password", "reset password", "verify account",
             "kyc", "account suspended", "account locked", "urgent", "immediately",
             "invoice", "payment failed", "refund", "claim prize", "lottery",
-            "download apk", "click here", "login now", "sign in"
+            "download apk", "click here", "login now", "sign in", "upi"
         )
         if w in body_text_only
     ]
@@ -482,7 +504,7 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
 
     final_score = max(0, min(100, int(score)))
     if not reasons:
-        reasons.append("No shortener/wrapper/cloak anomalies, APK/cheat lures, shared-path risks, sender anomalies, structural flaws, or live-page threats observed")
+        reasons.append("No shortener/wrapper/cloak anomalies, APK/cheat/UPI lures, shared-path risks, sender anomalies, structural flaws, or live-page threats observed")
     return final_score, reasons
 
 
@@ -703,7 +725,7 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
             f"page title reported as '{title}'."
         )
         why_text = (
-            f"No URL shortener masking, wrapped/nested external destinations, APK/mod/cheat lures, deceptive login/OAuth paths, "
+            f"No URL shortener masking, wrapped/nested external destinations, APK/mod/cheat/UPI lures, deceptive login/OAuth paths, "
             f"gibberish subdomains, fresh-domain red flags, credential forms, or obfuscated scripts were observed. "
             f"{'HTTPS TLS certificate check succeeded.' if proto == 'HTTPS' and tls_ok else 'Observed transport and structure appear normal.'}"
         )
@@ -734,7 +756,7 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
             f"Shared Path: {path_ctx.get('has_shared_user_path')} | Final URL: {final_url}"
         )
         safe_steps = [
-            "Stop and do NOT enter your password, OTP, card number, or download files/updates from this page, even if the link looks short or familiar.",
+            "Stop and do NOT enter your password, OTP, card number, UPI PIN, or download files/updates from this page, even if the link looks short or familiar.",
             "Close this tab, open a fresh browser window, and go directly to the official website or app on your own to verify anything."
         ]
 
@@ -777,8 +799,8 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
 
     prompt = f"""
 You are a Principal Digital Forensics & Anti-Phishing Analyst for ScamSense.
-Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, source email address forensics (MX/SPF/DMARC, domain age, disposable/free-provider impersonation, brand/Punycode spoofing), body content/lures/links, URL shortener/APK/cheat/mod lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect/bot-challenge behavior, and user input.
-Evaluate BOTH sender and body independently and together: a risky sender with neutral body text is still risky, and a normal-looking sender with phishing/OTP/urgency/malicious links in the body is also risky.
+Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, source email address forensics (MX/SPF/DMARC, domain age, disposable/free-provider impersonation, brand/Punycode spoofing), body content/lures/links, URL shortener/APK/cheat/mod/UPI lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect/bot-challenge behavior, and user input.
+Evaluate BOTH sender and body independently and together: a risky sender with neutral body text is still risky, and a normal-looking sender with phishing/OTP/urgency/UPI/malicious links in the body is also risky.
 Do not invent facts not present in the telemetry, and do not mention internal AI model names.
 
 Content Type: {content_type}
@@ -792,10 +814,10 @@ Return ONLY valid JSON:
 {{
     "risk_score": <integer 0-100 consistent with observed evidence>,
     "classification": "<SAFE HIGH RISK SUSPICIOUS |>",
-    "what_was_detected": "<2-3 clear sentences detailing the source email/outer/short target, DNS/domain age, body text/lures, shared/user path, APK/lure or subdomain/path anomalies, wrapped/encoded elements, and behavior>",
+    "what_was_detected": "<2-3 clear sentences detailing the source email/outer/short target, DNS/domain age, body text/lures, shared/user path, APK/lure/UPI or subdomain/path anomalies, wrapped/encoded elements, and behavior>",
     "why_suspicious": "<3-4 clear sentences explaining concrete signals from sender, body, or both, and how attackers spoof senders or hide traps behind shorteners, legitimate shells, or dynamic pages>",
-    "how_affects_user": "<2-3 clear sentences on real-world impact to device security, credentials, accounts, or data>",
-    "evidence": "<Concise MX/SPF/DMARC, age, body-lures, redirects/scripts, sender/domain, shortener/shared-path/apk/cheat/gibberish/wrapper/params/path, technical telemetry>",
+    "how_affects_user": "<2-3 clear sentences on real-world impact to device security, credentials, accounts, funds, or data>",
+    "evidence": "<Concise MX/SPF/DMARC, age, body-lures, redirects/scripts, sender/domain, shortener/shared-path/apk/cheat/upi/gibberish/wrapper/params/path, technical telemetry>",
     "how_to_stay_safe": [
         "<Clear, plain-English instruction for a non-technical everyday user explaining what NOT to do right now and why>",
         "<Simple, step-by-step safe alternative action they should take instead>"
