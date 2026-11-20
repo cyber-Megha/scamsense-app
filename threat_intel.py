@@ -39,6 +39,15 @@ URL_SHORTENER_HOSTS = (
     "is.gd", "buff.ly", "adf.ly", "cutt.ly", "rb.gy", "shorturl.at",
     "tiny.cc", "soo.gd", "clck.ru", "v.gd", "tr.im", "rebrand.ly"
 )
+DISPOSABLE_EMAIL_DOMAINS = {
+    "mailinator.com", "guerrillamail.com", "tempmail.com", "10minutemail.com",
+    "yopmail.com", "trashmail.com", "sharklasers.com", "getnada.com",
+    "dispostable.com", "temp-mail.org", "fakeinbox.com", "maildrop.cc"
+}
+FREE_PUBLIC_PROVIDERS = {
+    "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "live.com",
+    "icloud.com", "aol.com", "proton.me", "protonmail.com", "rediffmail.com"
+}
 LOGIN_LURE_TOKENS = (
     "login", "signin", "sign-in", "log-in", "webmail", "mail-login", "att-mail",
     "verify", "verification", "password", "reset", "auth", "oauth", "account",
@@ -435,7 +444,7 @@ def check_gsb(urls: list) -> dict:
     try:
         endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GSB_API_KEY}"
         payload = {
-            "client": {"clientId": "scamsense-soc", "clientVersion": "9.7"},
+            "client": {"clientId": "scamsense-soc", "clientVersion": "9.8"},
             "threatInfo": {
                 "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
                 "platformTypes": ["ANY_PLATFORM"],
@@ -508,6 +517,61 @@ def check_email_domain_dns(sender: str) -> dict:
     except Exception:
         pass
     return rep
+
+
+def analyze_email_source(raw_input: str) -> dict:
+    match = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", (raw_input or "").strip())
+    if not match:
+        return {"status": "invalid_or_missing_email", "email": None}
+
+    email_addr = match.group(0).lower()
+    local_part, dom = email_addr.split("@", 1)
+    parts = [p for p in dom.split(".") if p]
+    root_dom = f"{parts[-2]}.{parts[-1]}" if len(parts) >= 2 else dom
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_dns = ex.submit(check_email_domain_dns, email_addr)
+        f_age = ex.submit(get_domain_age_rdap, root_dom)
+        dns_rep = f_dns.result(timeout=3.0)
+        rdap_rep = f_age.result(timeout=3.0)
+
+    is_disposable = root_dom in DISPOSABLE_EMAIL_DOMAINS or dom in DISPOSABLE_EMAIL_DOMAINS
+    is_free_provider = root_dom in FREE_PUBLIC_PROVIDERS
+    is_punycode = "xn--" in dom
+    risky_tld = any(dom.endswith(tld) for tld in RISKY_TLDS)
+
+    brand_in_dom = [b for b in BRAND_IMPERSONATION_TOKENS if b in dom and b not in root_dom]
+    brand_in_local = [b for b in BRAND_IMPERSONATION_TOKENS if b in local_part]
+    lure_in_local = [t for t in LOGIN_LURE_TOKENS if t in local_part]
+
+    free_provider_impersonation = bool(
+        is_free_provider and (
+            brand_in_local
+            or any(k in local_part for k in ("support", "helpdesk", "kyc", "billing", "security", "official", "bank", "verify"))
+        )
+    )
+
+    digit_count = sum(c.isdigit() for c in local_part)
+    high_digit_local = len(local_part) >= 6 and (digit_count / len(local_part)) >= 0.45
+
+    return {
+        "status": "checked",
+        "email": email_addr,
+        "local_part": local_part,
+        "sender_domain": dom,
+        "root_domain": root_dom,
+        "dns": dns_rep,
+        "domain_age": rdap_rep,
+        "is_disposable": is_disposable,
+        "is_free_provider": is_free_provider,
+        "free_provider_impersonation": free_provider_impersonation,
+        "is_punycode": is_punycode,
+        "risky_tld": risky_tld,
+        "brand_mismatch_in_domain": brand_in_dom,
+        "brand_in_local": brand_in_local,
+        "lure_in_local": lure_in_local,
+        "high_digit_local": high_digit_local
+    }
 
 
 def analyze_url_deep(url: str) -> dict:
