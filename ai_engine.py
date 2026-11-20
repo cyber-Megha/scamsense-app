@@ -540,7 +540,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
     det_score, reasons = compute_behavioral_score(content_type, text_data, intel)
     compact_intel = json.dumps(intel, default=str)[:6000]
 
-    prompt = f"""
+prompt = f"""
 You are a Principal Digital Forensics & Anti-Phishing Analyst for ScamSense.
 Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, APK/cheat/mod lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect behavior, and user input.
 Never treat a link as safe solely because the outer root domain is well-known—phishing and scam campaigns often hide behind legitimate platforms, user-created paths, dynamic scripts, redirects, or wrapped parameters.
@@ -549,3 +549,26 @@ Do not invent facts not present in the telemetry, and do not mention internal AI
 Content Type: {content_type}
 User Input: {(text_data or "")[:1500]}
 Computed Baseline Score: {det_score}/100
+Observed Signals: {reasons}
+Telemetry JSON: {compact_intel}
+
+Strict Tiers: 0-30 = SAFE, 31-60 = SUSPICIOUS, 61-100 = HIGH RISK.
+Return ONLY valid JSON:
+{{
+    "risk_score": <integer 0-100 consistent with observed evidence>,
+    "classification": "<SAFE | SUSPICIOUS | HIGH RISK>",
+    "what_was_detected": "<2-3 clear sentences detailing the outer target, shared/user path, APK/lure or subdomain/path anomalies, wrapped/encoded elements, domain age, and page behavior>",
+    "why_suspicious": "<3-4 clear sentences explaining concrete signals and how attackers hide traps behind legitimate shells or dynamic pages>",
+    "how_affects_user": "<2-3 clear sentences on real-world impact to device security, credentials, accounts, or data>",
+    "evidence": "<Concise age, domain, redirects/scripts, shared-path/apk/cheat/gibberish/wrapper/params/path, technical telemetry>",
+    "how_to_stay_safe": [
+        "<Clear, plain-English instruction for a non-technical everyday user explaining what NOT to do right now and why>",
+        "<Simple, step-by-step safe alternative action they should take instead>"
+    ]
+}}
+"""
+ai_result = run_ai_pipeline(prompt, det_score, image_bytes=image_bytes)
+    final_result = ai_result or fallback_forensics(content_type, text_data, intel, det_score, reasons)
+
+    RESULT_CACHE[cache_key] = (time.time(), final_result)
+    return final_result
