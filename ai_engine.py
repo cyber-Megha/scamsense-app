@@ -285,7 +285,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 28
         reasons.append("TLS certificate verification failed")
 
-    # If live fetch returned no status / blocked / empty content AND target has lures or subdomains/hyphens
     if (beh.get("http_status") in (None, 0) or beh.get("bot_blocked_or_evasive")) and has_any_lure:
         score += 14
         reasons.append("Live page unreachable or protected while payload contains lure/verification/payment keywords")
@@ -555,12 +554,19 @@ def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
 
 def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = None):
     if image_bytes and gemini_client:
+        image_prompt = (
+            prompt
+            + "\n\nIMAGE FORENSICS RULE: Carefully inspect all visible text, filenames, commands, and terminal/UI elements in the image. "
+            "If the image shows executable/payload files (such as .exe, .apk, .bat, .ps1, .vbs, 'payload'), "
+            "HTTP file hosting/serving of executables, exploit/bypass/shell/malware tooling, or suspicious command activity, "
+            "do NOT classify it as SAFE—assign at least SUSPICIOUS (45-60) or HIGH RISK (65-95) based on severity."
+        )
         for model_name in ["gemini-2.5-flash", "gemini-2.5-flash-lite"]:
             try:
                 img = Image.open(io.BytesIO(image_bytes))
                 res = gemini_client.models.generate_content(
                     model=model_name,
-                    contents=[prompt, img],
+                    contents=[image_prompt, img],
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
                         temperature=0.0
@@ -795,11 +801,15 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
         return cached[1]
 
     det_score, reasons = compute_behavioral_score(content_type, text_data, intel)
+    if image_bytes and det_score < 20:
+        det_score = 20
+        reasons.append("Visual/screenshot inspection required for embedded text, filenames, or UI cues")
+
     compact_intel = json.dumps(intel, default=str)[:6000]
 
     prompt = f"""
 You are a Principal Digital Forensics & Anti-Phishing Analyst for ScamSense.
-Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, source email address forensics (MX/SPF/DMARC, domain age, disposable/free-provider impersonation, brand/Punycode spoofing), body content/lures/links, URL shortener/APK/cheat/mod/UPI lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect/bot-challenge behavior, and user input.
+Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, source email address forensics (MX/SPF/DMARC, domain age, disposable/free-provider impersonation, brand/Punycode spoofing), body content/lures/links, URL shortener/APK/cheat/mod/UPI lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect/bot-challenge behavior, image/screenshot visual cues, and user input.
 Evaluate BOTH sender and body independently and together: a risky sender with neutral body text is still risky, and a normal-looking sender with phishing/OTP/urgency/UPI/malicious links in the body is also risky.
 Do not invent facts not present in the telemetry, and do not mention internal AI model names.
 
@@ -814,10 +824,10 @@ Return ONLY valid JSON:
 {{
     "risk_score": <integer 0-100 consistent with observed evidence>,
     "classification": "<SAFE HIGH RISK SUSPICIOUS |>",
-    "what_was_detected": "<2-3 clear sentences detailing the source email/outer/short target, DNS/domain age, body text/lures, shared/user path, APK/lure/UPI or subdomain/path anomalies, wrapped/encoded elements, and behavior>",
-    "why_suspicious": "<3-4 clear sentences explaining concrete signals from sender, body, or both, and how attackers spoof senders or hide traps behind shorteners, legitimate shells, or dynamic pages>",
+    "what_was_detected": "<2-3 clear sentences detailing the source email/outer/short target, DNS/domain age, body text/lures, shared/user path, APK/lure/UPI or subdomain/path anomalies, wrapped/encoded elements, visual/screenshot elements, and behavior>",
+    "why_suspicious": "<3-4 clear sentences explaining concrete signals from sender, body, image/command content, or both, and how attackers spoof senders or hide traps behind shorteners, legitimate shells, executables, or dynamic pages>",
     "how_affects_user": "<2-3 clear sentences on real-world impact to device security, credentials, accounts, funds, or data>",
-    "evidence": "<Concise MX/SPF/DMARC, age, body-lures, redirects/scripts, sender/domain, shortener/shared-path/apk/cheat/upi/gibberish/wrapper/params/path, technical telemetry>",
+    "evidence": "<Concise MX/SPF/DMARC, age, body-lures, redirects/scripts, sender/domain, shortener/shared-path/apk/cheat/upi/gibberish/wrapper/params/path/visual-cues, technical telemetry>",
     "how_to_stay_safe": [
         "<Clear, plain-English instruction for a non-technical everyday user explaining what NOT to do right now and why>",
         "<Simple, step-by-step safe alternative action they should take instead>"
