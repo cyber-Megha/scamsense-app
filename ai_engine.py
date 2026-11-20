@@ -12,7 +12,7 @@ GEMINI_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
 GROQ_KEY = (os.getenv("GROQ_API_KEY") or "").strip()
 OPENROUTER_KEY = (os.getenv("OPENROUTER_API_KEY") or "").strip()
 
-gemini_client = genai.Client(api_key=GEMINI_KEY, http_options={"timeout": 22.0}) if GEMINI_KEY else None
+gemini_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
 RESULT_CACHE = {}
 CACHE_TTL_SECONDS = 300
@@ -689,10 +689,6 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
 
 
 def fallback_forensics(content_type: str, text_data: str, intel: dict, score: int, reasons: list[str], is_image: bool = False) -> dict:
-    if is_image and score < 42:
-        score = 42
-        reasons = list(reasons) + ["Vision analysis timed out or was unavailable—uploaded screenshot requires verification for commands, files, or payloads"]
-
     tier = get_tier(score)
     email_src = (intel or {}).get("source_email_forensics") or {}
 
@@ -837,7 +833,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
     intel = extra_intel or {}
     img_hash = hashlib.sha256(image_bytes).hexdigest() if image_bytes else "no_img"
     cache_key = hashlib.sha256(
-        f"v5.8:{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
+        f"v5.9:{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
     ).hexdigest()
 
     cached = RESULT_CACHE.get(cache_key)
