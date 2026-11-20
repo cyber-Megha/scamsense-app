@@ -507,6 +507,19 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
     return final_score, reasons
 
 
+def _detect_visual_threat_cues_from_text(text_blob: str) -> list[str]:
+    low = (text_blob or "").lower()
+    cues = [
+        tok for tok in (
+            ".exe", ".apk", ".bat", ".ps1", ".vbs", "payload", "shellcode",
+            "unsigned char buf", "bypass", "exploit", "meterpreter",
+            "reverse shell", "http.server", "directory listing"
+        )
+        if tok in low
+    ]
+    return cues
+
+
 def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
     cleaned = (raw_text or "").strip()
     if "```" in cleaned:
@@ -521,7 +534,20 @@ def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
     except Exception:
         ai_score = deterministic_score
 
-    final_score = max(deterministic_score, int(round(0.68 * deterministic_score + 0.32 * ai_score)))
+    combined_narrative = " ".join([
+        str(parsed.get("what_was_detected") or ""),
+        str(parsed.get("why_suspicious") or ""),
+        str(parsed.get("evidence") or "")
+    ])
+    visual_cues = _detect_visual_threat_cues_from_text(combined_narrative)
+
+    # Only elevate score when concrete visual/payload/executable cues are described
+    if visual_cues:
+        cued_floor = 65 if any(k in visual_cues for k in (".exe", ".apk", "payload", "shellcode", "unsigned char buf", "bypass", "exploit", "meterpreter")) else 48
+        final_score = max(deterministic_score, cued_floor, int(round(0.35 * deterministic_score + 0.65 * ai_score)))
+    else:
+        final_score = max(deterministic_score, int(round(0.68 * deterministic_score + 0.32 * ai_score)))
+
     final_score = max(0, min(100, final_score))
     tier = get_tier(final_score)
 
@@ -556,10 +582,11 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
     if image_bytes and gemini_client:
         image_prompt = (
             prompt
-            + "\n\nIMAGE FORENSICS RULE: Carefully inspect all visible text, filenames, commands, and terminal/UI elements in the image. "
-            "If the image shows executable/payload files (such as .exe, .apk, .bat, .ps1, .vbs, 'payload'), "
-            "HTTP file hosting/serving of executables, exploit/bypass/shell/malware tooling, or suspicious command activity, "
-            "do NOT classify it as SAFE—assign at least SUSPICIOUS (45-60) or HIGH RISK (65-95) based on severity."
+            + "\n\nIMAGE FORENSICS RULE: Inspect all visible text, filenames, commands, and UI/terminal elements accurately. "
+            "If the image is a normal, benign screenshot/photo with no executables/payloads/exploits/bypasses/credential traps/scam lures, keep it SAFE (0-25). "
+            "If the image shows executable/payload files (.exe, .apk, .bat, .ps1, .vbs, 'payload', shellcode/byte arrays), "
+            "HTTP file hosting/directory listing of executables or bypass/exploit scripts, or suspicious command activity, "
+            "assign SUSPICIOUS (45-60) or HIGH RISK (65-95) and state the exact observed filenames/commands."
         )
         for model_name in ["gemini-2.5-flash", "gemini-2.5-flash-lite"]:
             try:
@@ -747,23 +774,23 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
     else:
         what_detected = (
             f"Shield inspection of {content_type} targeting '{domain}' ({proto}, age: {age_str}) "
-            f"flagged shortener/APK/lure, shared-path, structural, subdomain/path, wrapper, or live-page risk signals (HTTP: {beh.get('http_status') or 'Blocked/Timeout'}, redirects: {redirects})."
+            f"flagged shortener/APK/lure, shared-path, structural, subdomain/path, wrapper, visual/image, or live-page risk signals (HTTP: {beh.get('http_status') or 'Blocked/Timeout'}, redirects: {redirects})."
         )
         why_text = (
-            f"{'; '.join(reasons)}. Attackers frequently hide phishing or scam lures behind URL shorteners, legitimate-looking domains, "
-            f"user-created/shared paths, randomized subdomains, wrapped links, or anti-bot challenges so surface appearance does not tell the whole story."
+            f"{'; '.join(reasons)}. Attackers frequently hide phishing, payload/executable files, or scam lures behind URL shorteners, legitimate-looking domains, "
+            f"user-created/shared paths, randomized subdomains, wrapped links, or unverified image/terminal content."
         )
         impact_text = (
             "High risk of malware/spyware infection, credential theft, session hijacking, account takeover, or deceptive redirection "
-            "if you trust the short/outer link blindly, download files, or enter sensitive details."
+            "if you trust unverified files, payloads, or links blindly."
         )
         evidence_text = (
             f"Score: {score}/100 | Host: {domain} | Shortener: {path_ctx.get('is_url_shortener')} | "
             f"Shared Path: {path_ctx.get('has_shared_user_path')} | Final URL: {final_url}"
         )
         safe_steps = [
-            "Stop and do NOT enter your password, OTP, card number, UPI PIN, or download files/updates from this page, even if the link looks short or familiar.",
-            "Close this tab, open a fresh browser window, and go directly to the official website or app on your own to verify anything."
+            "Stop and do NOT execute/download unfamiliar files, payloads, or scripts, or share sensitive details from unverified sources.",
+            "Verify the file or screenshot context carefully and use trusted, isolated environments before inspecting suspicious artifacts."
         ]
 
     return {
@@ -801,9 +828,8 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
         return cached[1]
 
     det_score, reasons = compute_behavioral_score(content_type, text_data, intel)
-    if image_bytes and det_score < 20:
-        det_score = 20
-        reasons.append("Visual/screenshot inspection required for embedded text, filenames, or UI cues")
+    if image_bytes and det_score < 16:
+        det_score = 16
 
     compact_intel = json.dumps(intel, default=str)[:6000]
 
