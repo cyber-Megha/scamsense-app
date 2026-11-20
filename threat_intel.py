@@ -22,7 +22,8 @@ RISKY_TLDS = (
 TUNNEL_AND_CLOUD_HOSTS = (
     "ngrok", "ngrok-free", "trycloudflare", "loclx", "serveo", "localtunnel",
     "pages.dev", "workers.dev", "supabase.co", "herokuapp.com", "000webhostapp.com",
-    "vercel.app", "netlify.app", "firebaseapp.com", "web.app", "duckdns.org", "glitch.me", "replit.dev"
+    "vercel.app", "netlify.app", "firebaseapp.com", "web.app", "duckdns.org",
+    "glitch.me", "replit.dev"
 )
 SCHEDULING_AND_FORM_HOSTS = (
     "calendly.com", "cal.com", "savvycal.com", "hubspot.com", "typeform.com",
@@ -68,12 +69,14 @@ COMMON_BENIGN_SUBDOMAINS = {
     "dev", "staging", "test", "app", "m", "mobile", "cloud", "vpn", "sso"
 }
 
+
 def calc_entropy(s: str) -> float:
     if not s:
         return 0.0
     freq = {c: s.count(c) for c in set(s)}
     length = len(s)
     return round(-sum((n / length) * math.log2(n / length) for n in freq.values()), 2)
+
 
 def is_gibberish_label(label: str) -> bool:
     s = (label or "").strip().lower()
@@ -87,12 +90,12 @@ def is_gibberish_label(label: str) -> bool:
     has_mixed_alnum = bool(re.search(r"[a-z]", s) and re.search(r"[0-9]", s)) and len(s) >= 7
     low_vowel_ratio = vowels <= max(1, len(alpha_only) // 4)
     high_label_entropy = calc_entropy(s) >= 2.75
-
     return (
         (high_label_entropy and low_vowel_ratio)
         or consonant_runs >= 1
         or (has_mixed_alnum and high_label_entropy)
     )
+
 
 def is_ip_address(host: str) -> bool:
     try:
@@ -101,12 +104,17 @@ def is_ip_address(host: str) -> bool:
     except OSError:
         return False
 
+
 def get_domain_age_rdap(root_domain: str) -> dict:
     info = {"checked": False, "age_days": None, "created_date": None, "is_newly_registered": False}
     if not root_domain or is_ip_address(root_domain):
         return info
     try:
-        r = requests.get(f"https://rdap.org/domain/{root_domain}", timeout=3.5, headers={"Accept": "application/rdap+json"})
+        r = requests.get(
+            f"https://rdap.org/domain/{root_domain}",
+            timeout=3.5,
+            headers={"Accept": "application/rdap+json"}
+        )
         if r.status_code == 200:
             data = r.json() or {}
             for ev in data.get("events") or []:
@@ -122,6 +130,7 @@ def get_domain_age_rdap(root_domain: str) -> dict:
     except Exception:
         pass
     return info
+
 
 def get_ssl_info(domain: str, port: int = 443) -> dict:
     info = {"tls_valid": False, "issuer": None, "not_after": None}
@@ -143,6 +152,7 @@ def get_ssl_info(domain: str, port: int = 443) -> dict:
         pass
     return info
 
+
 def inspect_wrapper_and_cloak(target_url: str, host: str) -> dict:
     once = unquote(target_url or "")
     twice = unquote(once)
@@ -152,7 +162,7 @@ def inspect_wrapper_and_cloak(target_url: str, host: str) -> dict:
     nested_urls = []
     decoded_b64_urls = []
 
-    for key, vals in qs.items():
+    for _, vals in qs.items():
         for v in vals:
             u1 = unquote(v)
             u2 = unquote(u1)
@@ -190,6 +200,7 @@ def inspect_wrapper_and_cloak(target_url: str, host: str) -> dict:
         "double_encoded_url": double_encoded,
         "has_fragment_payload": bool(parsed.fragment and len(parsed.fragment) > 8)
     }
+
 
 def inspect_oauth_and_params(target_url: str, host: str) -> dict:
     parsed = urlparse(target_url)
@@ -240,6 +251,7 @@ def inspect_oauth_and_params(target_url: str, host: str) -> dict:
         "query_param_count": len(qs)
     }
 
+
 def inspect_path_and_deception(target_url: str, host: str, root_dom: str) -> dict:
     parsed = urlparse(target_url)
     path_str = (parsed.path or "").lower()
@@ -254,15 +266,12 @@ def inspect_path_and_deception(target_url: str, host: str, root_dom: str) -> dic
     is_scheduling_or_form = any(h in host for h in SCHEDULING_AND_FORM_HOSTS)
 
     path_segments = [seg for seg in path_str.split("/") if seg]
-    has_shared_user_path = bool(
-        (is_scheduling_or_form or is_ugc_host) and len(path_segments) >= 1
-    )
+    has_shared_user_path = bool((is_scheduling_or_form or is_ugc_host) and len(path_segments) >= 1)
 
-    brand_hits = []
-    for b in BRAND_IMPERSONATION_TOKENS:
-        if b in host or b in path_str:
-            if b not in root_dom:
-                brand_hits.append(b)
+    brand_hits = [
+        b for b in BRAND_IMPERSONATION_TOKENS
+        if (b in host or b in path_str) and (b not in root_dom)
+    ]
 
     has_double_dash_trick = "--" in host or "---" in path_str
     encoded_percent_count = len(re.findall(r"%[0-9a-fA-F]{2}", target_url))
@@ -282,6 +291,7 @@ def inspect_path_and_deception(target_url: str, host: str, root_dom: str) -> dic
         "encoded_percent_count": encoded_percent_count,
         "gibberish_path_segments": gibberish_path_segments[:4]
     }
+
 
 def fetch_live_behaviour(target: str, root_dom: str) -> dict:
     behaviour = {
@@ -415,7 +425,7 @@ def check_gsb(urls: list) -> dict:
     try:
         endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GSB_API_KEY}"
         payload = {
-            "client": {"clientId": "scamsense-soc", "clientVersion": "9.3"},
+            "client": {"clientId": "scamsense-soc", "clientVersion": "9.4"},
             "threatInfo": {
                 "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"],
                 "platformTypes": ["ANY_PLATFORM"],
@@ -432,6 +442,7 @@ def check_gsb(urls: list) -> dict:
     except Exception:
         pass
     return {"checked": False, "is_dangerous": False, "threat_type": None}
+
 
 def check_vt(target_url: str) -> dict:
     if not VT_API_KEY or not target_url:
@@ -451,6 +462,7 @@ def check_vt(target_url: str) -> dict:
         pass
     return {"checked": False, "malicious": 0, "suspicious": 0}
 
+
 def check_urlhaus(target_url: str) -> dict:
     if not target_url:
         return {"checked": False, "listed": False, "threat": None}
@@ -464,6 +476,7 @@ def check_urlhaus(target_url: str) -> dict:
     except Exception:
         pass
     return {"checked": False, "listed": False, "threat": None}
+
 
 def check_email_domain_dns(sender: str) -> dict:
     if not sender or "@" not in sender:
@@ -485,6 +498,7 @@ def check_email_domain_dns(sender: str) -> dict:
     except Exception:
         pass
     return rep
+
 
 def analyze_url_deep(url: str) -> dict:
     decoded = unquote((url or "").strip())
