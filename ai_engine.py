@@ -156,7 +156,7 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 22
         reasons.append("Encoded Base64 string detected in URL query")
 
-    # Path lures, legitimate platform shell / user-generated path & brand mismatch
+    # Path lures, URL shorteners, legitimate platform shell / user-generated path & brand mismatch
     if path_ctx.get("lure_on_ugc_or_profile_path"):
         score += 56
         reasons.append(
@@ -172,6 +172,15 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         reasons.append(
             f"Credential/account lure keyword in URL path/query: {', '.join(path_ctx.get('login_or_lure_tokens')[:4])}"
         )
+
+    if path_ctx.get("has_short_code"):
+        score += 32
+        reasons.append(
+            f"URL shortener link ('{heur.get('domain')}') masks the final destination behind a short path"
+        )
+    elif path_ctx.get("is_url_shortener"):
+        score += 24
+        reasons.append(f"Hosted on URL shortener domain ('{heur.get('domain')}')")
 
     if path_ctx.get("has_shared_user_path"):
         score += 30
@@ -228,7 +237,7 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 28
         reasons.append("TLS certificate verification failed")
 
-    # Live page, sparse/JS-heavy page, forms, scripts & redirects
+    # Live page, sparse/JS-heavy page, bot challenge, forms, scripts & redirects
     if beh.get("sparse_or_js_page"):
         score += 26
         reasons.append(
@@ -246,6 +255,16 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
     ):
         score += 22
         reasons.append("Randomized subdomain combined with anti-bot challenge, redirect, or fresh domain signal")
+
+    if beh.get("bot_blocked_or_evasive") and (
+        path_ctx.get("has_short_code")
+        or path_ctx.get("has_shared_user_path")
+        or path_ctx.get("is_scheduling_or_form_host")
+    ):
+        score += 24
+        reasons.append(
+            "Anti-bot or Cloudflare challenge blocked inspection on a short/shared link—actual destination could not be verified"
+        )
 
     if beh.get("bot_blocked_or_evasive") and (
         smuggle_params
@@ -343,7 +362,7 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
 
     final_score = max(0, min(100, int(score)))
     if not reasons:
-        reasons.append("No wrapping/cloak anomalies, APK/cheat lures, shared-path risks, structural flaws, or live-page threats observed")
+        reasons.append("No shortener/wrapper/cloak anomalies, APK/cheat lures, shared-path risks, structural flaws, or live-page threats observed")
     return final_score, reasons
 
 
@@ -377,11 +396,11 @@ def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
         "classification": tier,
         "what_was_detected": str(
             parsed.get("what_was_detected")
-            or "Target analyzed for wrapper/cloak deception, APK/lure terms, shared paths, structural flaws, and live-page behavior."
+            or "Target analyzed for shortener/wrapper/cloak deception, APK/lure terms, shared paths, structural flaws, and live-page behavior."
         ).strip(),
         "why_suspicious": str(
             parsed.get("why_suspicious")
-            or "Evaluated wrapped/nested targets, APK/cheat lures, legitimate-platform shells, domain age, and page behavior."
+            or "Evaluated shortener/wrapped/nested targets, APK/cheat lures, legitimate-platform shells, domain age, and page behavior."
         ).strip(),
         "how_affects_user": str(
             parsed.get("how_affects_user")
@@ -504,8 +523,8 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
             f"page title reported as '{title}'."
         )
         why_text = (
-            f"No wrapped/nested external destinations, APK/mod/cheat lures, deceptive login/OAuth paths, gibberish subdomains, "
-            f"fresh-domain red flags, credential forms, or obfuscated scripts were observed. "
+            f"No URL shortener masking, wrapped/nested external destinations, APK/mod/cheat lures, deceptive login/OAuth paths, "
+            f"gibberish subdomains, fresh-domain red flags, credential forms, or obfuscated scripts were observed. "
             f"{'HTTPS TLS certificate check succeeded.' if proto == 'HTTPS' and tls_ok else 'Observed transport and structure appear normal.'}"
         )
         impact_text = (
@@ -520,22 +539,22 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
     else:
         what_detected = (
             f"Shield inspection of {content_type} targeting '{domain}' ({proto}, age: {age_str}) "
-            f"flagged APK/lure, shared-path, structural, subdomain/path, wrapper, or live-page risk signals (HTTP: {beh.get('http_status') or 'Blocked/Timeout'}, redirects: {redirects})."
+            f"flagged shortener/APK/lure, shared-path, structural, subdomain/path, wrapper, or live-page risk signals (HTTP: {beh.get('http_status') or 'Blocked/Timeout'}, redirects: {redirects})."
         )
         why_text = (
-            f"{'; '.join(reasons)}. Attackers frequently hide phishing or scam lures inside legitimate-looking domains, "
-            f"user-created/shared paths, randomized subdomains, wrapped links, or dynamic pages so surface appearance does not tell the whole story."
+            f"{'; '.join(reasons)}. Attackers frequently hide phishing or scam lures behind URL shorteners, legitimate-looking domains, "
+            f"user-created/shared paths, randomized subdomains, wrapped links, or anti-bot challenges so surface appearance does not tell the whole story."
         )
         impact_text = (
             "High risk of malware/spyware infection, credential theft, session hijacking, account takeover, or deceptive redirection "
-            "if you trust the outer domain blindly, download files, or enter sensitive details."
+            "if you trust the short/outer link blindly, download files, or enter sensitive details."
         )
         evidence_text = (
-            f"Score: {score}/100 | Host: {domain} | Shared Path: {path_ctx.get('has_shared_user_path')} | "
-            f"APK/Cheat Tokens: {path_ctx.get('apk_or_cheat_lure_tokens') or []} | Final URL: {final_url}"
+            f"Score: {score}/100 | Host: {domain} | Shortener: {path_ctx.get('is_url_shortener')} | "
+            f"Shared Path: {path_ctx.get('has_shared_user_path')} | Final URL: {final_url}"
         )
         safe_steps = [
-            "Stop and do NOT enter your password, OTP, card number, or download files/updates from this page, even if the main website name looks familiar.",
+            "Stop and do NOT enter your password, OTP, card number, or download files/updates from this page, even if the link looks short or familiar.",
             "Close this tab, open a fresh browser window, and go directly to the official website or app on your own to verify anything."
         ]
 
@@ -578,8 +597,8 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
 
     prompt = f"""
 You are a Principal Digital Forensics & Anti-Phishing Analyst for ScamSense.
-Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, APK/cheat/mod lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect behavior, and user input.
-Never treat a link as safe solely because the outer root domain is well-known—phishing and scam campaigns often hide behind legitimate platforms, user-created paths, dynamic scripts, redirects, or wrapped parameters.
+Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, URL shortener/APK/cheat/mod lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect/bot-challenge behavior, and user input.
+Never treat a link as safe solely because the outer root domain is well-known or uses a URL shortener—phishing and scam campaigns often hide behind short links, legitimate platforms, user-created paths, dynamic scripts, redirects, or wrapped parameters.
 Do not invent facts not present in the telemetry, and do not mention internal AI model names.
 
 Content Type: {content_type}
@@ -593,10 +612,10 @@ Return ONLY valid JSON:
 {{
     "risk_score": <integer 0-100 consistent with observed evidence>,
     "classification": "<SAFE HIGH RISK SUSPICIOUS |>",
-    "what_was_detected": "<2-3 clear sentences detailing the outer target, shared/user path, APK/lure or subdomain/path anomalies, wrapped/encoded elements, domain age, and page behavior>",
-    "why_suspicious": "<3-4 clear sentences explaining concrete signals and how attackers hide traps behind legitimate shells or dynamic pages>",
+    "what_was_detected": "<2-3 clear sentences detailing the outer/short target, shared/user path, APK/lure or subdomain/path anomalies, wrapped/encoded elements, domain age, and page behavior>",
+    "why_suspicious": "<3-4 clear sentences explaining concrete signals and how attackers hide traps behind shorteners, legitimate shells, or dynamic pages>",
     "how_affects_user": "<2-3 clear sentences on real-world impact to device security, credentials, accounts, or data>",
-    "evidence": "<Concise age, domain, redirects/scripts, shared-path/apk/cheat/gibberish/wrapper/params/path, technical telemetry>",
+    "evidence": "<Concise age, domain, redirects/scripts, shortener/shared-path/apk/cheat/gibberish/wrapper/params/path, technical telemetry>",
     "how_to_stay_safe": [
         "<Clear, plain-English instruction for a non-technical everyday user explaining what NOT to do right now and why>",
         "<Simple, step-by-step safe alternative action they should take instead>"
