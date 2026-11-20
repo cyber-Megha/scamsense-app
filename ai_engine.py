@@ -6,7 +6,6 @@ import re
 import time
 import requests
 from google import genai
-from google.genai import types
 from PIL import Image
 
 GEMINI_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
@@ -602,13 +601,11 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
                 res = gemini_client.models.generate_content(
                     model=model_name,
                     contents=[image_prompt, img],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.0
-                    )
+                    config={"temperature": 0.0}
                 )
-                if res and res.text:
-                    return parse_ai_json(res.text, deterministic_score)
+                raw_txt = getattr(res, "text", None)
+                if raw_txt:
+                    return parse_ai_json(raw_txt, deterministic_score)
             except Exception as exc:
                 print(f"[ScamSense Vision Error:{model_name}] {exc}")
                 continue
@@ -671,20 +668,22 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
                 res = gemini_client.models.generate_content(
                     model=model_name,
                     contents=[prompt],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.0
-                    )
+                    config={"temperature": 0.0}
                 )
-                if res and res.text:
-                    return parse_ai_json(res.text, deterministic_score)
+                raw_txt = getattr(res, "text", None)
+                if raw_txt:
+                    return parse_ai_json(raw_txt, deterministic_score)
             except Exception:
                 continue
 
     return None
 
 
-def fallback_forensics(content_type: str, text_data: str, intel: dict, score: int, reasons: list[str]) -> dict:
+def fallback_forensics(content_type: str, text_data: str, intel: dict, score: int, reasons: list[str], is_image: bool = False) -> dict:
+    if is_image and score < 42:
+        score = 42
+        reasons = list(reasons) + ["Vision analysis unavailable—uploaded screenshot requires manual verification for commands, files, or payloads"]
+
     tier = get_tier(score)
     email_src = (intel or {}).get("source_email_forensics") or {}
 
@@ -829,7 +828,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
     intel = extra_intel or {}
     img_hash = hashlib.sha256(image_bytes).hexdigest() if image_bytes else "no_img"
     cache_key = hashlib.sha256(
-        f"v5.5:{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
+        f"v5.6:{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
     ).hexdigest()
 
     cached = RESULT_CACHE.get(cache_key)
@@ -871,7 +870,9 @@ Return ONLY valid JSON:
 """
 
     ai_result = run_ai_pipeline(prompt, det_score, image_bytes=image_bytes)
-    final_result = ai_result or fallback_forensics(content_type, text_data, intel, det_score, reasons)
+    final_result = ai_result or fallback_forensics(
+        content_type, text_data, intel, det_score, reasons, is_image=bool(image_bytes)
+    )
 
     RESULT_CACHE[cache_key] = (time.time(), final_result)
     return final_result
