@@ -618,4 +618,122 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
     path_ctx = heur.get("path_context") or {}
     dom_age = heur.get("domain_age") or {}
 
-    domain = heur.get("domain") or "Target
+    domain = heur.get("domain") or "Target Payload"
+    proto = heur.get("protocol") or "N/A"
+    final_url = beh.get("final_url") or text_data or "N/A"
+    title = beh.get("title") or "Protected / JS-rendered / wrapped page"
+    redirects = int(beh.get("redirect_count") or 0)
+    tls_ok = ssl_info.get("tls_valid")
+    age_str = f"{dom_age.get('age_days')} days" if dom_age.get("age_days") is not None else "Unknown"
+
+    if tier == "SAFE":
+        what_detected = (
+            f"Inspected {content_type} targeting '{domain}' ({proto}, age: {age_str}) with {redirects} redirect(s); "
+            f"page title reported as '{title}'."
+        )
+        why_text = (
+            f"No URL shortener masking, wrapped/nested external destinations, APK/mod/cheat lures, deceptive login/OAuth paths, "
+            f"gibberish subdomains, fresh-domain red flags, credential forms, or obfuscated scripts were observed. "
+            f"{'HTTPS TLS certificate check succeeded.' if proto == 'HTTPS' and tls_ok else 'Observed transport and structure appear normal.'}"
+        )
+        impact_text = (
+            "Low immediate threat based on behavioral, wrapper, and structural checks. "
+            "Always verify domain spelling and official sources before downloading files or entering credentials."
+        )
+        evidence_text = f"Domain: {domain} | Age: {age_str} | Protocol: {proto} | TLS: {tls_ok} | Risk Score: {score}/100"
+        safe_steps = [
+            "This link currently looks clean, so you can browse normally—just double-check the website spelling in your browser bar before typing any password.",
+            "Never share your OTP, PIN, or password or install unverified APK files if any page asks for urgent action."
+        ]
+    else:
+        what_detected = (
+            f"Shield inspection of {content_type} targeting '{domain}' ({proto}, age: {age_str}) "
+            f"flagged shortener/APK/lure, shared-path, structural, subdomain/path, wrapper, or live-page risk signals (HTTP: {beh.get('http_status') or 'Blocked/Timeout'}, redirects: {redirects})."
+        )
+        why_text = (
+            f"{'; '.join(reasons)}. Attackers frequently hide phishing or scam lures behind URL shorteners, legitimate-looking domains, "
+            f"user-created/shared paths, randomized subdomains, wrapped links, or anti-bot challenges so surface appearance does not tell the whole story."
+        )
+        impact_text = (
+            "High risk of malware/spyware infection, credential theft, session hijacking, account takeover, or deceptive redirection "
+            "if you trust the short/outer link blindly, download files, or enter sensitive details."
+        )
+        evidence_text = (
+            f"Score: {score}/100 | Host: {domain} | Shortener: {path_ctx.get('is_url_shortener')} | "
+            f"Shared Path: {path_ctx.get('has_shared_user_path')} | Final URL: {final_url}"
+        )
+        safe_steps = [
+            "Stop and do NOT enter your password, OTP, card number, or download files/updates from this page, even if the link looks short or familiar.",
+            "Close this tab, open a fresh browser window, and go directly to the official website or app on your own to verify anything."
+        ]
+
+    return {
+        "risk_score": score,
+        "classification": tier,
+        "what_was_detected": what_detected,
+        "why_suspicious": why_text,
+        "how_affects_user": impact_text,
+        "evidence": evidence_text,
+        "how_to_stay_safe": safe_steps
+    }
+
+
+def _cleanup_cache():
+    now = time.time()
+    expired = [k for k, (ts, _) in RESULT_CACHE.items() if now - ts > CACHE_TTL_SECONDS]
+    for k in expired:
+        RESULT_CACHE.pop(k, None)
+    if len(RESULT_CACHE) > MAX_CACHE_ITEMS:
+        oldest_keys = sorted(RESULT_CACHE.keys(), key=lambda k: RESULT_CACHE[k][0])[: len(RESULT_CACHE) - MAX_CACHE_ITEMS]
+        for k in oldest_keys:
+            RESULT_CACHE.pop(k, None)
+
+
+def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = None, extra_intel: dict = None) -> dict:
+    _cleanup_cache()
+    intel = extra_intel or {}
+    img_hash = hashlib.sha256(image_bytes).hexdigest() if image_bytes else "no_img"
+    cache_key = hashlib.sha256(
+        f"{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
+    ).hexdigest()
+
+    cached = RESULT_CACHE.get(cache_key)
+    if cached and (time.time() - cached[0]) <= CACHE_TTL_SECONDS:
+        return cached[1]
+
+    det_score, reasons = compute_behavioral_score(content_type, text_data, intel)
+    compact_intel = json.dumps(intel, default=str)[:6000]
+
+    prompt = f"""
+You are a Principal Digital Forensics & Anti-Phishing Analyst for ScamSense.
+Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, source email address forensics (MX/SPF/DMARC, domain age, disposable/free-provider impersonation, brand/Punycode spoofing), URL shortener/APK/cheat/mod lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect/bot-challenge behavior, and user input.
+Never treat a sender or link as safe solely because the outer root domain is well-known or uses a URL shortener or public email provider.
+Do not invent facts not present in the telemetry, and do not mention internal AI model names.
+
+Content Type: {content_type}
+User Input: {(text_data or "")[:1500]}
+Computed Baseline Score: {det_score}/100
+Observed Signals: {reasons}
+Telemetry JSON: {compact_intel}
+
+Strict Tiers: 0-30 = SAFE, 31-60 = SUSPICIOUS, 61-100 = HIGH RISK.
+Return ONLY valid JSON:
+{{
+    "risk_score": <integer 0-100 consistent with observed evidence>,
+    "classification": "<SAFE HIGH RISK SUSPICIOUS |>",
+    "what_was_detected": "<2-3 clear sentences detailing the source email/outer/short target, DNS/domain age, shared/user path, APK/lure or subdomain/path anomalies, wrapped/encoded elements, and behavior>",
+    "why_suspicious": "<3-4 clear sentences explaining concrete signals and how attackers spoof senders or hide traps behind shorteners, legitimate shells, or dynamic pages>",
+    "how_affects_user": "<2-3 clear sentences on real-world impact to device security, credentials, accounts, or data>",
+    "evidence": "<Concise MX/SPF/DMARC, age, redirects/scripts, sender/domain, shortener/shared-path/apk/cheat/gibberish/wrapper/params/path, technical telemetry>",
+    "how_to_stay_safe": [
+        "<Clear, plain-English instruction for a non-technical everyday user explaining what NOT to do right now and why>",
+        "<Simple, step-by-step safe alternative action they should take instead>"
+    ]
+}}
+"""
+
+    ai_result = run_ai_pipeline(prompt, det_score, image_bytes=image_bytes)
+    final_result = ai_result or fallback_forensics(content_type, text_data, intel, det_score, reasons)
+
+    RESULT_CACHE[cache_key] = (time.time(), final_result)
+    return final_result
