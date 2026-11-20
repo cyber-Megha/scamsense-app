@@ -172,6 +172,19 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
             f"Credential/account lure keyword in URL path/query: {', '.join(path_ctx.get('login_or_lure_tokens')[:4])}"
         )
 
+    scam_lure_tokens = (
+        "claim", "prize", "prizes", "winner", "won", "reward", "lottery",
+        "gift", "free-gift", "bonus", "spin", "lucky", "jackpot"
+    )
+    final_u_str = beh.get("final_url") or ""
+    full_target_blob = f"{text_data or ''} {heur.get('domain') or ''} {final_u_str}".lower()
+    scam_lure_hits = [tok for tok in scam_lure_tokens if tok in full_target_blob]
+    if scam_lure_hits:
+        score += 34 if len(scam_lure_hits) >= 2 else 26
+        reasons.append(
+            f"Prize/reward/winner scam lure keywords detected ({', '.join(scam_lure_hits[:4])})"
+        )
+
     if path_ctx.get("has_short_code"):
         score += 32
         reasons.append(
@@ -231,6 +244,9 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
     if heur.get("protocol") == "HTTP" and not heur.get("is_ip_host"):
         score += 20
         reasons.append("Unencrypted HTTP transport")
+        if scam_lure_hits or int(heur.get("subdomain_count") or 0) >= 2:
+            score += 14
+            reasons.append("Unencrypted HTTP combined with prize/scam lure or multi-level subdomain")
     elif heur.get("protocol") == "HTTPS" and heur.get("domain") and not ssl_info.get("tls_valid"):
         score += 28
         reasons.append("TLS certificate verification failed")
@@ -409,7 +425,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
             score += 15
             reasons.append("Auto-generated numeric pattern in sender username")
 
-    # Cross-signal evaluation: Source vs Body independent & combined checks
     source_risk_flag = bool(
         email_src.get("status") == "checked" and (
             email_src.get("is_disposable")
