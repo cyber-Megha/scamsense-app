@@ -35,12 +35,15 @@ def _extract_email_from_text(txt: str) -> str:
 
 def _prepare_image_for_vision(image_bytes: bytes) -> Image.Image:
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    max_dim = 1024
+    max_dim = 768
     w, h = img.size
     if max(w, h) > max_dim:
         scale = max_dim / float(max(w, h))
         img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
-    return img
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=75, optimize=True)
+    buf.seek(0)
+    return Image.open(buf)
 
 
 def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> tuple[int, list[str]]:
@@ -834,7 +837,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
     intel = extra_intel or {}
     img_hash = hashlib.sha256(image_bytes).hexdigest() if image_bytes else "no_img"
     cache_key = hashlib.sha256(
-        f"v5.7:{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
+        f"v5.8:{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
     ).hexdigest()
 
     cached = RESULT_CACHE.get(cache_key)
