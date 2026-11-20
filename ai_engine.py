@@ -29,6 +29,11 @@ def get_tier(score: int) -> str:
     return "HIGH RISK"
 
 
+def _extract_email_from_text(txt: str) -> str:
+    m = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", (txt or "").strip())
+    return m.group(0).lower() if m else ""
+
+
 def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> tuple[int, list[str]]:
     score = 8
     reasons = []
@@ -352,9 +357,61 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
             score += 20
             reasons.append("Sender domain lacks SPF and DMARC records")
 
+    email_src = data.get("source_email_forensics") or {}
+    if email_src.get("status") == "checked":
+        e_dns = email_src.get("dns") or {}
+        e_age = email_src.get("domain_age") or {}
+
+        if email_src.get("is_disposable"):
+            score += 55
+            reasons.append(f"Disposable/temporary email provider detected ({email_src.get('sender_domain')})")
+
+        if email_src.get("is_punycode"):
+            score += 48
+            reasons.append("Punycode (xn--) lookalike characters in sender domain")
+
+        if email_src.get("free_provider_impersonation"):
+            score += 45
+            reasons.append(
+                f"Public free email ({email_src.get('sender_domain')}) using official/brand-style username ('{email_src.get('local_part')}')"
+            )
+
+        if email_src.get("brand_mismatch_in_domain"):
+            score += 42
+            reasons.append(
+                f"Brand keyword ({', '.join(email_src['brand_mismatch_in_domain'])}) spoofed inside sender domain '{email_src.get('sender_domain')}'"
+            )
+
+        if email_src.get("risky_tld"):
+            score += 32
+            reasons.append(f"Sender domain uses high-risk/disposable TLD ('{email_src.get('sender_domain')}')")
+
+        if not e_dns.get("has_mx"):
+            score += 35
+            reasons.append(f"Sender domain '{email_src.get('sender_domain')}' has no valid MX mail server records")
+        if not e_dns.get("has_spf") and not e_dns.get("has_dmarc"):
+            score += 24
+            reasons.append("Sender domain lacks both SPF and DMARC anti-spoofing records")
+        elif not e_dns.get("has_dmarc"):
+            score += 12
+            reasons.append("Sender domain lacks DMARC policy record")
+
+        if e_age.get("checked") and e_age.get("is_newly_registered"):
+            age_d = e_age.get("age_days")
+            score += 38 if (age_d is not None and age_d <= 30) else 24
+            reasons.append(f"Newly registered sender domain ({age_d} days old, created {e_age.get('created_date')})")
+
+        if email_src.get("lure_in_local") and not email_src.get("is_free_provider"):
+            score += 20
+            reasons.append(f"Account/verification lure keyword in sender address ({', '.join(email_src['lure_in_local'][:3])})")
+
+        if email_src.get("high_digit_local"):
+            score += 15
+            reasons.append("Auto-generated numeric pattern in sender username")
+
     final_score = max(0, min(100, int(score)))
     if not reasons:
-        reasons.append("No shortener/wrapper/cloak anomalies, APK/cheat lures, shared-path risks, structural flaws, or live-page threats observed")
+        reasons.append("No shortener/wrapper/cloak anomalies, APK/cheat lures, shared-path risks, sender anomalies, structural flaws, or live-page threats observed")
     return final_score, reasons
 
 
@@ -379,8 +436,8 @@ def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
     steps = parsed.get("how_to_stay_safe")
     if not isinstance(steps, list) or not steps:
         steps = [
-            "Do not type your password, OTP, or bank details on any page opened from an unexpected link—even if the main website name looks familiar.",
-            "If you want to check your account or download an app, close this page, open a fresh browser tab, and visit the official service directly."
+            "Do not reply with personal details, OTPs, or passwords or click links from an unexpected email sender.",
+            "Verify the sender independently through the official website or known contact channel before taking action."
         ]
 
     return {
@@ -388,15 +445,15 @@ def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
         "classification": tier,
         "what_was_detected": str(
             parsed.get("what_was_detected")
-            or "Target analyzed for shortener/wrapper/cloak deception, APK/lure terms, shared paths, structural flaws, and live-page behavior."
+            or "Target/sender analyzed for email authentication, domain age, brand spoofing, shortener/wrapper deception, and threat signals."
         ).strip(),
         "why_suspicious": str(
             parsed.get("why_suspicious")
-            or "Evaluated shortener/wrapped/nested targets, APK/cheat lures, legitimate-platform shells, domain age, and page behavior."
+            or "Evaluated source email signals, domain reputation, shortener/wrapped targets, and structural/behavioral indicators."
         ).strip(),
         "how_affects_user": str(
             parsed.get("how_affects_user")
-            or "Assess malware, credential, session, and account risk before interacting with the target."
+            or "Assess spoofing, phishing, credential theft, or malware risk before trusting or responding."
         ).strip(),
         "evidence": str(parsed.get("evidence") or f"Computed Risk Score: {final_score}/100").strip(),
         "how_to_stay_safe": [str(s).strip() for s in steps[:3] if str(s).strip()]
@@ -494,6 +551,66 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
 
 def fallback_forensics(content_type: str, text_data: str, intel: dict, score: int, reasons: list[str]) -> dict:
     tier = get_tier(score)
+    email_src = (intel or {}).get("source_email_forensics") or {}
+
+    if email_src.get("status") == "checked":
+        sender_addr = email_src.get("email") or _extract_email_from_text(text_data) or "Unknown Sender"
+        s_dom = email_src.get("sender_domain") or "N/A"
+        e_dns = email_src.get("dns") or {}
+        e_age = email_src.get("domain_age") or {}
+        age_str = f"{e_age.get('age_days')} days" if e_age.get("age_days") is not None else "Unknown"
+
+        if tier == "SAFE":
+            what_detected = (
+                f"Inspected source email address '{sender_addr}' on domain '{s_dom}' (domain age: {age_str}; "
+                f"MX: {e_dns.get('has_mx')}, SPF: {e_dns.get('has_spf')}, DMARC: {e_dns.get('has_dmarc')})."
+            )
+            why_text = (
+                "No disposable mail provider, lookalike/Punycode domain, brand spoofing, high-risk TLD, "
+                "or glaring sender authentication anomalies were detected from the source email address alone."
+            )
+            impact_text = (
+                "Source address checks look normal so far, though you should still stay cautious if an email asks for urgent action, OTP, or unexpected links."
+            )
+            evidence_text = (
+                f"Sender: {sender_addr} | Domain: {s_dom} | Age: {age_str} | "
+                f"MX/SPF/DMARC: {e_dns.get('has_mx')}/{e_dns.get('has_spf')}/{e_dns.get('has_dmarc')} | Score: {score}/100"
+            )
+            safe_steps = [
+                "The sender address itself looks normal, but never share OTPs, passwords, or payment info just because an email appears to come from a familiar address.",
+                "If anything feels unexpected, confirm directly through the official website or app rather than trusting email prompts alone."
+            ]
+        else:
+            what_detected = (
+                f"Source email check on '{sender_addr}' (domain '{s_dom}', age: {age_str}) flagged risk signals "
+                f"(MX: {e_dns.get('has_mx')}, SPF: {e_dns.get('has_spf')}, DMARC: {e_dns.get('has_dmarc')})."
+            )
+            why_text = (
+                f"{'; '.join(reasons)}. Attackers often use lookalike domains, newly registered domains, free/disposable addresses, "
+                "or weak mail authentication to impersonate trusted senders even without complex email body text."
+            )
+            impact_text = (
+                "High risk of phishing, business/brand impersonation, credential theft, or financial fraud if you trust or reply to this sender."
+            )
+            evidence_text = (
+                f"Score: {score}/100 | Sender: {sender_addr} | Domain: {s_dom} | Age: {age_str} | "
+                f"Disposable: {email_src.get('is_disposable')} | Free Impersonation: {email_src.get('free_provider_impersonation')}"
+            )
+            safe_steps = [
+                "Do not reply, click links, download attachments, or share credentials/OTPs with this sender address.",
+                "Mark it as suspicious/spam and verify any request independently via the official organization website."
+            ]
+
+        return {
+            "risk_score": score,
+            "classification": tier,
+            "what_was_detected": what_detected,
+            "why_suspicious": why_text,
+            "how_affects_user": impact_text,
+            "evidence": evidence_text,
+            "how_to_stay_safe": safe_steps
+        }
+
     report = intel if "behaviour" in intel else next(iter(intel.get("embedded_urls_intel") or []), {})
     heur = report.get("heuristics") or {}
     beh = report.get("behaviour") or {}
@@ -518,105 +635,3 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
             f"No URL shortener masking, wrapped/nested external destinations, APK/mod/cheat lures, deceptive login/OAuth paths, "
             f"gibberish subdomains, fresh-domain red flags, credential forms, or obfuscated scripts were observed. "
             f"{'HTTPS TLS certificate check succeeded.' if proto == 'HTTPS' and tls_ok else 'Observed transport and structure appear normal.'}"
-        )
-        impact_text = (
-            "Low immediate threat based on behavioral, wrapper, and structural checks. "
-            "Always verify domain spelling and official sources before downloading files or entering credentials."
-        )
-        evidence_text = f"Domain: {domain} | Age: {age_str} | Protocol: {proto} | TLS: {tls_ok} | Risk Score: {score}/100"
-        safe_steps = [
-            "This link currently looks clean, so you can browse normally—just double-check the website spelling in your browser bar before typing any password.",
-            "Never share your OTP, PIN, or password or install unverified APK files if any page asks for urgent action."
-        ]
-    else:
-        what_detected = (
-            f"Shield inspection of {content_type} targeting '{domain}' ({proto}, age: {age_str}) "
-            f"flagged shortener/APK/lure, shared-path, structural, subdomain/path, wrapper, or live-page risk signals (HTTP: {beh.get('http_status') or 'Blocked/Timeout'}, redirects: {redirects})."
-        )
-        why_text = (
-            f"{'; '.join(reasons)}. Attackers frequently hide phishing or scam lures behind URL shorteners, legitimate-looking domains, "
-            f"user-created/shared paths, randomized subdomains, wrapped links, or anti-bot challenges so surface appearance does not tell the whole story."
-        )
-        impact_text = (
-            "High risk of malware/spyware infection, credential theft, session hijacking, account takeover, or deceptive redirection "
-            "if you trust the short/outer link blindly, download files, or enter sensitive details."
-        )
-        evidence_text = (
-            f"Score: {score}/100 | Host: {domain} | Shortener: {path_ctx.get('is_url_shortener')} | "
-            f"Shared Path: {path_ctx.get('has_shared_user_path')} | Final URL: {final_url}"
-        )
-        safe_steps = [
-            "Stop and do NOT enter your password, OTP, card number, or download files/updates from this page, even if the link looks short or familiar.",
-            "Close this tab, open a fresh browser window, and go directly to the official website or app on your own to verify anything."
-        ]
-
-    return {
-        "risk_score": score,
-        "classification": tier,
-        "what_was_detected": what_detected,
-        "why_suspicious": why_text,
-        "how_affects_user": impact_text,
-        "evidence": evidence_text,
-        "how_to_stay_safe": safe_steps
-    }
-
-
-def _cleanup_cache():
-    now = time.time()
-    expired = [k for k, (ts, _) in RESULT_CACHE.items() if now - ts > CACHE_TTL_SECONDS]
-    for k in expired:
-        RESULT_CACHE.pop(k, None)
-    if len(RESULT_CACHE) > MAX_CACHE_ITEMS:
-        oldest_keys = sorted(RESULT_CACHE.keys(), key=lambda k: RESULT_CACHE[k][0])[: len(RESULT_CACHE) - MAX_CACHE_ITEMS]
-        for k in oldest_keys:
-            RESULT_CACHE.pop(k, None)
-
-
-def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = None, extra_intel: dict = None) -> dict:
-    _cleanup_cache()
-    intel = extra_intel or {}
-    img_hash = hashlib.sha256(image_bytes).hexdigest() if image_bytes else "no_img"
-    cache_key = hashlib.sha256(
-        f"{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
-    ).hexdigest()
-
-    cached = RESULT_CACHE.get(cache_key)
-    if cached and (time.time() - cached[0]) <= CACHE_TTL_SECONDS:
-        return cached[1]
-
-    det_score, reasons = compute_behavioral_score(content_type, text_data, intel)
-    compact_intel = json.dumps(intel, default=str)[:6000]
-
-    prompt = f"""
-You are a Principal Digital Forensics & Anti-Phishing Analyst for ScamSense.
-Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, URL shortener/APK/cheat/mod lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect/bot-challenge behavior, and user input.
-Never treat a link as safe solely because the outer root domain is well-known or uses a URL shortener—phishing and scam campaigns often hide behind short links, legitimate platforms, user-created paths, dynamic scripts, redirects, or wrapped parameters.
-Do not invent facts not present in the telemetry, and do not mention internal AI model names.
-
-Content Type: {content_type}
-User Input: {(text_data or "")[:1500]}
-Computed Baseline Score: {det_score}/100
-Observed Signals: {reasons}
-Telemetry JSON: {compact_intel}
-
-Strict Tiers: 0-30 = SAFE, 31-60 = SUSPICIOUS, 61-100 = HIGH RISK.
-Return ONLY valid JSON:
-{{
-    "risk_score": <integer 0-100 consistent with observed evidence>,
-    "classification": "<SAFE HIGH RISK SUSPICIOUS |>",
-    "what_was_detected": "<2-3 clear sentences detailing the outer/short target, shared/user path, APK/lure or subdomain/path anomalies, wrapped/encoded elements, domain age, and page behavior>",
-    "why_suspicious": "<3-4 clear sentences explaining concrete signals and how attackers hide traps behind shorteners, legitimate shells, or dynamic pages>",
-    "how_affects_user": "<2-3 clear sentences on real-world impact to device security, credentials, accounts, or data>",
-    "evidence": "<Concise age, domain, redirects/scripts, shortener/shared-path/apk/cheat/gibberish/wrapper/params/path, technical telemetry>",
-    "how_to_stay_safe": [
-        "<Clear, plain-English instruction for a non-technical everyday user explaining what NOT to do right now and why>",
-        "<Simple, step-by-step safe alternative action they should take instead>"
-    ]
-}}
-"""
-
-    ai_result = run_ai_pipeline(prompt, det_score, image_bytes=image_bytes)
-    final_result = ai_result or fallback_forensics(content_type, text_data, intel, det_score, reasons)
-
-    RESULT_CACHE[cache_key] = (time.time(), final_result)
-    return final_result
