@@ -272,7 +272,7 @@ def inspect_path_and_deception(target_url: str, host: str, root_dom: str) -> dic
     query_str = (parsed.query or "").lower()
     host_path_q = f"{host} {path_str} {query_str}"
 
-    lure_hits = [tok for tok in LOGIN_LURE_TOKENS if tok in f"{path_str} {query_str}"]
+    lure_hits = [tok for tok in LOGIN_LURE_TOKENS if tok in f"{host} {path_str} {query_str}"]
     apk_cheat_hits = [tok for tok in APK_CHEAT_LURE_TOKENS if tok in host_path_q]
 
     is_ugc_host = any(h in host for h in UGC_OR_PROFILE_HOSTS)
