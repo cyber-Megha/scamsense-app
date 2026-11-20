@@ -3,10 +3,10 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from scanners import extract_text_from_document, decode_qr_from_image
-from threat_intel import analyze_url_deep, check_email_domain_dns
+from threat_intel import analyze_url_deep, check_email_domain_dns, analyze_email_source
 from ai_engine import analyze_threat
 
-app = FastAPI(title="ScamSense Zero-Trust Threat Engine", version="5.1")
+app = FastAPI(title="ScamSense Zero-Trust Threat Engine", version="5.2")
 
 app.add_middleware(
     CORSMiddleware,
@@ -14,6 +14,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 def extract_and_scan_embedded_urls(text: str):
     try:
@@ -32,6 +33,7 @@ def extract_and_scan_embedded_urls(text: str):
     except Exception:
         return None
 
+
 @app.post("/api/scan/url")
 async def scan_url(url: str = Form(...)):
     if not (url or "").strip():
@@ -43,6 +45,7 @@ async def scan_url(url: str = Form(...)):
         extra_intel=deep_intel
     )
     return {"status": "success", "url_intel": deep_intel, "data": result}
+
 
 @app.post("/api/scan/qr")
 async def scan_qr(file: UploadFile = File(...)):
@@ -64,22 +67,28 @@ async def scan_qr(file: UploadFile = File(...)):
     )
     return {"status": "success", "decoded_qr": qr_payload, "url_intel": url_intel, "data": result}
 
+
 @app.post("/api/scan/email")
-async def scan_email(sender: str = Form(""), subject: str = Form(""), body: str = Form(...)):
-    if not (body or "").strip():
-        return {"status": "error", "message": "Email body cannot be empty."}
-    email_full = f"Sender: {sender}\nSubject: {subject}\nEmail Body: {body}"
+async def scan_email(sender: str = Form(""), subject: str = Form(""), body: str = Form("")):
+    if not (sender or "").strip() and not (body or "").strip():
+        return {"status": "error", "message": "Please provide a source email address or email body."}
+
+    email_full = f"Sender: {sender}\nSubject: {subject}\nEmail Body: {body}".strip()
     dns_intel = check_email_domain_dns(sender)
+    source_intel = analyze_email_source(sender or email_full)
     embedded_intel = extract_and_scan_embedded_urls(email_full)
+
     result = analyze_threat(
-        content_type="Email Phishing Check",
+        content_type="Source Email & Body Check" if (body or "").strip() else "Source Email Check",
         text_data=email_full,
         extra_intel={
             "sender_dns_forensics": dns_intel,
+            "source_email_forensics": source_intel,
             "embedded_urls_intel": embedded_intel
         }
     )
-    return {"status": "success", "data": result}
+    return {"status": "success", "source_intel": source_intel, "data": result}
+
 
 @app.post("/api/scan/message")
 async def scan_message(message: str = Form(...)):
@@ -92,6 +101,7 @@ async def scan_message(message: str = Form(...)):
         extra_intel={"embedded_urls_intel": embedded_intel}
     )
     return {"status": "success", "data": result}
+
 
 @app.post("/api/scan/document")
 async def scan_document(file: UploadFile = File(...)):
@@ -107,6 +117,7 @@ async def scan_document(file: UploadFile = File(...)):
     )
     return {"status": "success", "data": result}
 
+
 @app.post("/api/scan/image")
 async def scan_image(file: UploadFile = File(...)):
     file_bytes = await file.read()
@@ -117,5 +128,6 @@ async def scan_image(file: UploadFile = File(...)):
         image_bytes=file_bytes
     )
     return {"status": "success", "data": result}
+
 
 app.mount("/", StaticFiles(directory=".", html=True), name="frontend")
