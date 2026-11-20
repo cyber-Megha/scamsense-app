@@ -13,7 +13,7 @@ GEMINI_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
 GROQ_KEY = (os.getenv("GROQ_API_KEY") or "").strip()
 OPENROUTER_KEY = (os.getenv("OPENROUTER_API_KEY") or "").strip()
 
-gemini_client = genai.Client(api_key=GEMINI_KEY, http_options={"timeout": 15.0}) if GEMINI_KEY else None
+gemini_client = genai.Client(api_key=GEMINI_KEY, http_options={"timeout": 10.0}) if GEMINI_KEY else None
 
 RESULT_CACHE = {}
 CACHE_TTL_SECONDS = 300
@@ -67,7 +67,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 70
         reasons.append(f"Listed in active malware feed ({uh.get('threat') or 'URLhaus'})")
 
-    # APK / Cheat / Mod / Panel lure indicators
     apk_cheat_hits = path_ctx.get("apk_or_cheat_lure_tokens") or []
     if len(apk_cheat_hits) >= 2:
         score += 42
@@ -80,7 +79,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
             f"APK/mod/cheat/gaming lure keyword detected ({apk_cheat_hits[0]})—verify package authenticity and avoid untrusted installers"
         )
 
-    # TLD-independent randomized/gibberish subdomain & path checks
     gib_subs = heur.get("gibberish_subdomains") or []
     gib_paths = path_ctx.get("gibberish_path_segments") or []
     if gib_subs:
@@ -94,7 +92,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
             f"Randomized/gibberish URL path segment(s) detected ({', '.join(gib_paths[:2])})"
         )
 
-    # Wrapped / nested / encoded / fragment cloak signals
     if wrap_info.get("external_wrapped_hosts"):
         score += 54
         reasons.append(
@@ -116,7 +113,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 22
         reasons.append("Long URL fragment (#) payload—often used for client-side routing or credential tricks")
 
-    # Newly registered domain age
     if dom_age.get("checked") and dom_age.get("is_newly_registered"):
         age_d = dom_age.get("age_days")
         if age_d is not None and age_d <= 30:
@@ -126,7 +122,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
             score += 28
             reasons.append(f"Recently registered domain ({age_d} days old, created {dom_age.get('created_date')})")
 
-    # OAuth, open redirect & smuggled parameter signals
     if oauth_info.get("external_redirect_params"):
         score += 55
         reasons.append(
@@ -156,7 +151,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 22
         reasons.append("Encoded Base64 string detected in URL query")
 
-    # Path lures, URL shorteners, legitimate platform shell / user-generated path & brand mismatch
     if path_ctx.get("lure_on_ugc_or_profile_path"):
         score += 56
         reasons.append(
@@ -207,7 +201,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 18
         reasons.append("Heavy percent-encoding obscuring URL path or query")
 
-    # Host, TLD, tunneling/cloud & TLS checks
     if heur.get("is_ip_host"):
         score += 38
         reasons.append("Direct IP address host instead of registered domain")
@@ -237,7 +230,6 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 28
         reasons.append("TLS certificate verification failed")
 
-    # Live page, sparse/JS-heavy page, bot challenge, forms, scripts & redirects
     if beh.get("sparse_or_js_page"):
         score += 26
         reasons.append(
@@ -445,7 +437,7 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
                         "temperature": 0.0,
                         "response_format": {"type": "json_object"}
                     },
-                    timeout=10
+                    timeout=8
                 )
                 if r.status_code == 200:
                     choices = r.json().get("choices") or []
@@ -470,7 +462,7 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.0
                     },
-                    timeout=12
+                    timeout=8
                 )
                 if r.status_code == 200:
                     choices = r.json().get("choices") or []
