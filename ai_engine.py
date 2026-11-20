@@ -618,20 +618,4 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
     path_ctx = heur.get("path_context") or {}
     dom_age = heur.get("domain_age") or {}
 
-    domain = heur.get("domain") or "Target Payload"
-    proto = heur.get("protocol") or "N/A"
-    final_url = beh.get("final_url") or text_data or "N/A"
-    title = beh.get("title") or "Protected / JS-rendered / wrapped page"
-    redirects = int(beh.get("redirect_count") or 0)
-    tls_ok = ssl_info.get("tls_valid")
-    age_str = f"{dom_age.get('age_days')} days" if dom_age.get("age_days") is not None else "Unknown"
-
-    if tier == "SAFE":
-        what_detected = (
-            f"Inspected {content_type} targeting '{domain}' ({proto}, age: {age_str}) with {redirects} redirect(s); "
-            f"page title reported as '{title}'."
-        )
-        why_text = (
-            f"No URL shortener masking, wrapped/nested external destinations, APK/mod/cheat lures, deceptive login/OAuth paths, "
-            f"gibberish subdomains, fresh-domain red flags, credential forms, or obfuscated scripts were observed. "
-            f"{'HTTPS TLS certificate check succeeded.' if proto == 'HTTPS' and tls_ok else 'Observed transport and structure appear normal.'}"
+    domain = heur.get("domain") or "Target
