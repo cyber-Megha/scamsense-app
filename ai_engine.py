@@ -19,6 +19,7 @@ RESULT_CACHE = {}
 CACHE_TTL_SECONDS = 300
 MAX_CACHE_ITEMS = 256
 
+
 def get_tier(score: int) -> str:
     s = max(0, min(100, int(score)))
     if s <= 30:
@@ -26,6 +27,7 @@ def get_tier(score: int) -> str:
     if s <= 60:
         return "SUSPICIOUS"
     return "HIGH RISK"
+
 
 def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> tuple[int, list[str]]:
     score = 8
@@ -237,13 +239,21 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 26
         reasons.append("Automatic HTML meta-refresh redirect detected on page")
 
-    if gib_subs and (beh.get("bot_blocked_or_evasive") or dom_age.get("is_newly_registered") or int(beh.get("redirect_count") or 0) >= 1):
+    if gib_subs and (
+        beh.get("bot_blocked_or_evasive")
+        or dom_age.get("is_newly_registered")
+        or int(beh.get("redirect_count") or 0) >= 1
+    ):
         score += 22
         reasons.append("Randomized subdomain combined with anti-bot challenge, redirect, or fresh domain signal")
 
     if beh.get("bot_blocked_or_evasive") and (
-        smuggle_params or wrap_info.get("has_nested_wrapped_url") or path_ctx.get("login_or_lure_tokens")
-        or oauth_info.get("is_oauth_or_auth_flow") or heur.get("tunnel_or_cloud_host") or dom_age.get("is_newly_registered")
+        smuggle_params
+        or wrap_info.get("has_nested_wrapped_url")
+        or path_ctx.get("login_or_lure_tokens")
+        or oauth_info.get("is_oauth_or_auth_flow")
+        or heur.get("tunnel_or_cloud_host")
+        or dom_age.get("is_newly_registered")
     ):
         score += 30
         reasons.append("Scanner blocked or served anti-bot/JS challenge on a wrapped, parameterized, or high-signal link")
@@ -269,14 +279,22 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         score += 28
         reasons.append("Password input field detected on page")
         if (
-            heur.get("risky_tld") or heur.get("tunnel_or_cloud_host") or heur.get("is_ip_host")
-            or len(ext_forms) > 0 or path_ctx.get("login_or_lure_tokens") or path_ctx.get("brand_mismatch_tokens")
-            or dom_age.get("is_newly_registered") or gib_subs
+            heur.get("risky_tld")
+            or heur.get("tunnel_or_cloud_host")
+            or heur.get("is_ip_host")
+            or len(ext_forms) > 0
+            or path_ctx.get("login_or_lure_tokens")
+            or path_ctx.get("brand_mismatch_tokens")
+            or dom_age.get("is_newly_registered")
+            or gib_subs
         ):
             score += 28
             reasons.append("Password field paired with suspicious subdomain/host/domain age, deceptive path, or external form")
     elif has_cred_inputs and (
-        heur.get("tunnel_or_cloud_host") or heur.get("risky_tld") or path_ctx.get("login_or_lure_tokens") or gib_subs
+        heur.get("tunnel_or_cloud_host")
+        or heur.get("risky_tld")
+        or path_ctx.get("login_or_lure_tokens")
+        or gib_subs
     ):
         score += 24
         reasons.append("Credential/account input fields present alongside suspicious host, subdomain, or lure path")
@@ -304,7 +322,13 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
     if len(urgency_hits) >= 2:
         score += 24
         reasons.append("Urgency/verification/login social engineering language detected")
-    elif any(w in combined_txt for w in ("otp", "pin", "cvv", "kyc update", "account blocked", "pay now", "free skin", "claim reward", "download apk", "panel")):
+    elif any(
+        w in combined_txt
+        for w in (
+            "otp", "pin", "cvv", "kyc update", "account blocked",
+            "pay now", "free skin", "claim reward", "download apk", "panel"
+        )
+    ):
         score += 22
         reasons.append("High-pressure credential, OTP, APK, or reward lure keywords detected")
 
@@ -321,6 +345,7 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
     if not reasons:
         reasons.append("No wrapping/cloak anomalies, APK/cheat lures, shared-path risks, structural flaws, or live-page threats observed")
     return final_score, reasons
+
 
 def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
     cleaned = (raw_text or "").strip()
@@ -350,12 +375,22 @@ def parse_ai_json(raw_text: str, deterministic_score: int) -> dict:
     return {
         "risk_score": final_score,
         "classification": tier,
-        "what_was_detected": str(parsed.get("what_was_detected") or "Target analyzed for wrapper/cloak deception, APK/lure terms, shared paths, structural flaws, and live-page behavior.").strip(),
-        "why_suspicious": str(parsed.get("why_suspicious") or "Evaluated wrapped/nested targets, APK/cheat lures, legitimate-platform shells, domain age, and page behavior.").strip(),
-        "how_affects_user": str(parsed.get("how_affects_user") or "Assess malware, credential, session, and account risk before interacting with the target.").strip(),
+        "what_was_detected": str(
+            parsed.get("what_was_detected")
+            or "Target analyzed for wrapper/cloak deception, APK/lure terms, shared paths, structural flaws, and live-page behavior."
+        ).strip(),
+        "why_suspicious": str(
+            parsed.get("why_suspicious")
+            or "Evaluated wrapped/nested targets, APK/cheat lures, legitimate-platform shells, domain age, and page behavior."
+        ).strip(),
+        "how_affects_user": str(
+            parsed.get("how_affects_user")
+            or "Assess malware, credential, session, and account risk before interacting with the target."
+        ).strip(),
         "evidence": str(parsed.get("evidence") or f"Computed Risk Score: {final_score}/100").strip(),
         "how_to_stay_safe": [str(s).strip() for s in steps[:3] if str(s).strip()]
     }
+
 
 def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = None):
     if image_bytes and gemini_client:
@@ -445,14 +480,13 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
 
     return None
 
+
 def fallback_forensics(content_type: str, text_data: str, intel: dict, score: int, reasons: list[str]) -> dict:
     tier = get_tier(score)
     report = intel if "behaviour" in intel else next(iter(intel.get("embedded_urls_intel") or []), {})
     heur = report.get("heuristics") or {}
     beh = report.get("behaviour") or {}
     ssl_info = heur.get("ssl") or {}
-    wrap_info = heur.get("wrapper_cloak") or {}
-    oauth_info = heur.get("oauth_analysis") or {}
     path_ctx = heur.get("path_context") or {}
     dom_age = heur.get("domain_age") or {}
 
@@ -515,6 +549,7 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
         "how_to_stay_safe": safe_steps
     }
 
+
 def _cleanup_cache():
     now = time.time()
     expired = [k for k, (ts, _) in RESULT_CACHE.items() if now - ts > CACHE_TTL_SECONDS]
@@ -524,6 +559,7 @@ def _cleanup_cache():
         oldest_keys = sorted(RESULT_CACHE.keys(), key=lambda k: RESULT_CACHE[k][0])[: len(RESULT_CACHE) - MAX_CACHE_ITEMS]
         for k in oldest_keys:
             RESULT_CACHE.pop(k, None)
+
 
 def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = None, extra_intel: dict = None) -> dict:
     _cleanup_cache()
@@ -540,7 +576,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
     det_score, reasons = compute_behavioral_score(content_type, text_data, intel)
     compact_intel = json.dumps(intel, default=str)[:6000]
 
-prompt = f"""
+    prompt = f"""
 You are a Principal Digital Forensics & Anti-Phishing Analyst for ScamSense.
 Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, APK/cheat/mod lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect behavior, and user input.
 Never treat a link as safe solely because the outer root domain is well-known—phishing and scam campaigns often hide behind legitimate platforms, user-created paths, dynamic scripts, redirects, or wrapped parameters.
@@ -556,7 +592,7 @@ Strict Tiers: 0-30 = SAFE, 31-60 = SUSPICIOUS, 61-100 = HIGH RISK.
 Return ONLY valid JSON:
 {{
     "risk_score": <integer 0-100 consistent with observed evidence>,
-    "classification": "<SAFE | SUSPICIOUS | HIGH RISK>",
+    "classification": "<SAFE HIGH RISK SUSPICIOUS |>",
     "what_was_detected": "<2-3 clear sentences detailing the outer target, shared/user path, APK/lure or subdomain/path anomalies, wrapped/encoded elements, domain age, and page behavior>",
     "why_suspicious": "<3-4 clear sentences explaining concrete signals and how attackers hide traps behind legitimate shells or dynamic pages>",
     "how_affects_user": "<2-3 clear sentences on real-world impact to device security, credentials, accounts, or data>",
@@ -567,7 +603,8 @@ Return ONLY valid JSON:
     ]
 }}
 """
-ai_result = run_ai_pipeline(prompt, det_score, image_bytes=image_bytes)
+
+    ai_result = run_ai_pipeline(prompt, det_score, image_bytes=image_bytes)
     final_result = ai_result or fallback_forensics(content_type, text_data, intel, det_score, reasons)
 
     RESULT_CACHE[cache_key] = (time.time(), final_result)
