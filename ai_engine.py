@@ -609,7 +609,8 @@ def run_ai_pipeline(prompt: str, deterministic_score: int, image_bytes: bytes = 
                 )
                 if res and res.text:
                     return parse_ai_json(res.text, deterministic_score)
-            except Exception:
+            except Exception as exc:
+                print(f"[ScamSense Vision Error:{model_name}] {exc}")
                 continue
         return None
 
@@ -828,7 +829,7 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
     intel = extra_intel or {}
     img_hash = hashlib.sha256(image_bytes).hexdigest() if image_bytes else "no_img"
     cache_key = hashlib.sha256(
-        f"v5.4:{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
+        f"v5.5:{content_type}:{text_data}:{img_hash}:{json.dumps(intel, sort_keys=True, default=str)}".encode()
     ).hexdigest()
 
     cached = RESULT_CACHE.get(cache_key)
