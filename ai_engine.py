@@ -169,20 +169,37 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
     elif path_ctx.get("login_or_lure_tokens") and not heur.get("is_ip_host"):
         score += 28
         reasons.append(
-            f"Credential/account lure keyword in URL path/query: {', '.join(path_ctx.get('login_or_lure_tokens')[:4])}"
+            f"Credential/account lure keyword in URL host/path/query: {', '.join(path_ctx.get('login_or_lure_tokens')[:4])}"
         )
+
+    final_u_str = beh.get("final_url") or ""
+    full_target_blob = f"{text_data or ''} {heur.get('domain') or ''} {final_u_str}".lower()
 
     scam_lure_tokens = (
         "claim", "prize", "prizes", "winner", "won", "reward", "lottery",
         "gift", "free-gift", "bonus", "spin", "lucky", "jackpot"
     )
-    final_u_str = beh.get("final_url") or ""
-    full_target_blob = f"{text_data or ''} {heur.get('domain') or ''} {final_u_str}".lower()
     scam_lure_hits = [tok for tok in scam_lure_tokens if tok in full_target_blob]
     if scam_lure_hits:
         score += 34 if len(scam_lure_hits) >= 2 else 26
         reasons.append(
             f"Prize/reward/winner scam lure keywords detected ({', '.join(scam_lure_hits[:4])})"
+        )
+
+    auth_lure_tokens = (
+        "login", "log-in", "signin", "sign-in", "verify", "verification",
+        "account", "password", "reset", "security-check", "kyc", "wallet", "auth"
+    )
+    auth_lure_hits = [tok for tok in auth_lure_tokens if tok in full_target_blob]
+    if len(auth_lure_hits) >= 2:
+        score += 34
+        reasons.append(
+            f"Multiple login/account/verification lure keywords in target ({', '.join(auth_lure_hits[:4])})"
+        )
+    elif len(auth_lure_hits) == 1:
+        score += 24
+        reasons.append(
+            f"Login/verification/account lure keyword in target ({auth_lure_hits[0]})"
         )
 
     if path_ctx.get("has_short_code"):
@@ -244,9 +261,9 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
     if heur.get("protocol") == "HTTP" and not heur.get("is_ip_host"):
         score += 20
         reasons.append("Unencrypted HTTP transport")
-        if scam_lure_hits or int(heur.get("subdomain_count") or 0) >= 2:
+        if scam_lure_hits or auth_lure_hits or int(heur.get("subdomain_count") or 0) >= 2:
             score += 14
-            reasons.append("Unencrypted HTTP combined with prize/scam lure or multi-level subdomain")
+            reasons.append("Unencrypted HTTP combined with login/verification/scam lure or multi-level subdomain")
     elif heur.get("protocol") == "HTTPS" and heur.get("domain") and not ssl_info.get("tls_valid"):
         score += 28
         reasons.append("TLS certificate verification failed")
