@@ -358,10 +358,10 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
             reasons.append("Sender domain lacks SPF and DMARC records")
 
     email_src = data.get("source_email_forensics") or {}
-    if email_src.get("status") == "checked":
-        e_dns = email_src.get("dns") or {}
-        e_age = email_src.get("domain_age") or {}
+    e_dns = email_src.get("dns") or {}
+    e_age = email_src.get("domain_age") or {}
 
+    if email_src.get("status") == "checked":
         if email_src.get("is_disposable"):
             score += 55
             reasons.append(f"Disposable/temporary email provider detected ({email_src.get('sender_domain')})")
@@ -408,6 +408,45 @@ def compute_behavioral_score(content_type: str, text_data: str, intel: dict) -> 
         if email_src.get("high_digit_local"):
             score += 15
             reasons.append("Auto-generated numeric pattern in sender username")
+
+    # Cross-signal evaluation: Source vs Body independent & combined checks
+    source_risk_flag = bool(
+        email_src.get("status") == "checked" and (
+            email_src.get("is_disposable")
+            or email_src.get("is_punycode")
+            or email_src.get("free_provider_impersonation")
+            or email_src.get("brand_mismatch_in_domain")
+            or email_src.get("risky_tld")
+            or not e_dns.get("has_mx")
+            or (not e_dns.get("has_spf") and not e_dns.get("has_dmarc"))
+            or (e_age.get("checked") and e_age.get("is_newly_registered"))
+        )
+    )
+
+    body_text_only = (text_data or "").lower()
+    body_lure_hits = [
+        w for w in (
+            "otp", "pin", "cvv", "password", "reset password", "verify account",
+            "kyc", "account suspended", "account locked", "urgent", "immediately",
+            "invoice", "payment failed", "refund", "claim prize", "lottery",
+            "download apk", "click here", "login now", "sign in"
+        )
+        if w in body_text_only
+    ]
+    has_embedded_url_in_body = bool(re.search(r"https?://|www\.", body_text_only))
+    body_risk_flag = bool(len(body_lure_hits) >= 2 or (has_embedded_url_in_body and len(body_lure_hits) >= 1))
+
+    if source_risk_flag and not body_risk_flag and body_text_only.strip():
+        score += 14
+        reasons.append(
+            "Sender address carries risk indicators despite benign/neutral email body text"
+        )
+
+    if not source_risk_flag and body_risk_flag:
+        score += 24
+        reasons.append(
+            f"Email body contains high-risk social engineering/lure cues ({', '.join(body_lure_hits[:4])}) even though sender domain appears normal"
+        )
 
     final_score = max(0, min(100, int(score)))
     if not reasons:
@@ -562,43 +601,43 @@ def fallback_forensics(content_type: str, text_data: str, intel: dict, score: in
 
         if tier == "SAFE":
             what_detected = (
-                f"Inspected source email address '{sender_addr}' on domain '{s_dom}' (domain age: {age_str}; "
+                f"Inspected source email address '{sender_addr}' and body on domain '{s_dom}' (domain age: {age_str}; "
                 f"MX: {e_dns.get('has_mx')}, SPF: {e_dns.get('has_spf')}, DMARC: {e_dns.get('has_dmarc')})."
             )
             why_text = (
                 "No disposable mail provider, lookalike/Punycode domain, brand spoofing, high-risk TLD, "
-                "or glaring sender authentication anomalies were detected from the source email address alone."
+                "sender authentication anomalies, or high-pressure body lures were detected."
             )
             impact_text = (
-                "Source address checks look normal so far, though you should still stay cautious if an email asks for urgent action, OTP, or unexpected links."
+                "Both sender and message cues look low-risk right now, though you should still stay cautious if asked for OTPs, passwords, or unexpected links."
             )
             evidence_text = (
                 f"Sender: {sender_addr} | Domain: {s_dom} | Age: {age_str} | "
                 f"MX/SPF/DMARC: {e_dns.get('has_mx')}/{e_dns.get('has_spf')}/{e_dns.get('has_dmarc')} | Score: {score}/100"
             )
             safe_steps = [
-                "The sender address itself looks normal, but never share OTPs, passwords, or payment info just because an email appears to come from a familiar address.",
-                "If anything feels unexpected, confirm directly through the official website or app rather than trusting email prompts alone."
+                "The sender and message currently look normal, but never share OTPs, passwords, or payment details from unexpected prompts.",
+                "If anything feels unusual, verify directly through the official website or app rather than trusting email prompts alone."
             ]
         else:
             what_detected = (
-                f"Source email check on '{sender_addr}' (domain '{s_dom}', age: {age_str}) flagged risk signals "
+                f"Email analysis of sender '{sender_addr}' (domain '{s_dom}', age: {age_str}) and message body flagged risk signals "
                 f"(MX: {e_dns.get('has_mx')}, SPF: {e_dns.get('has_spf')}, DMARC: {e_dns.get('has_dmarc')})."
             )
             why_text = (
-                f"{'; '.join(reasons)}. Attackers often use lookalike domains, newly registered domains, free/disposable addresses, "
-                "or weak mail authentication to impersonate trusted senders even without complex email body text."
+                f"{'; '.join(reasons)}. Attackers may use a risky or spoofed sender with neutral body text, "
+                "or use a normal-looking sender alongside urgent credential/OTP/link lures in the body."
             )
             impact_text = (
-                "High risk of phishing, business/brand impersonation, credential theft, or financial fraud if you trust or reply to this sender."
+                "High risk of phishing, spoofing, credential theft, account takeover, or financial fraud if you trust, reply to, or click links in this email."
             )
             evidence_text = (
                 f"Score: {score}/100 | Sender: {sender_addr} | Domain: {s_dom} | Age: {age_str} | "
                 f"Disposable: {email_src.get('is_disposable')} | Free Impersonation: {email_src.get('free_provider_impersonation')}"
             )
             safe_steps = [
-                "Do not reply, click links, download attachments, or share credentials/OTPs with this sender address.",
-                "Mark it as suspicious/spam and verify any request independently via the official organization website."
+                "Do not reply, click links, download attachments, or share credentials/OTPs based on this email.",
+                "Treat it as untrusted and verify any request independently through the official service channel."
             ]
 
         return {
@@ -706,8 +745,8 @@ def analyze_threat(content_type: str, text_data: str = "", image_bytes: bytes = 
 
     prompt = f"""
 You are a Principal Digital Forensics & Anti-Phishing Analyst for ScamSense.
-Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, source email address forensics (MX/SPF/DMARC, domain age, disposable/free-provider impersonation, brand/Punycode spoofing), URL shortener/APK/cheat/mod lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect/bot-challenge behavior, and user input.
-Never treat a sender or link as safe solely because the outer root domain is well-known or uses a URL shortener or public email provider.
+Perform a strict, zero-trust forensic analysis using ONLY the observed telemetry, source email address forensics (MX/SPF/DMARC, domain age, disposable/free-provider impersonation, brand/Punycode spoofing), body content/lures/links, URL shortener/APK/cheat/mod lure indicators, shared/user-generated path checks, TLD-independent subdomain/path checks, wrapper/cloak inspection, RDAP domain age, URL path/query/OAuth inspection, form/script/meta-refresh/redirect/bot-challenge behavior, and user input.
+Evaluate BOTH sender and body independently and together: a risky sender with neutral body text is still risky, and a normal-looking sender with phishing/OTP/urgency/malicious links in the body is also risky.
 Do not invent facts not present in the telemetry, and do not mention internal AI model names.
 
 Content Type: {content_type}
@@ -721,10 +760,10 @@ Return ONLY valid JSON:
 {{
     "risk_score": <integer 0-100 consistent with observed evidence>,
     "classification": "<SAFE HIGH RISK SUSPICIOUS |>",
-    "what_was_detected": "<2-3 clear sentences detailing the source email/outer/short target, DNS/domain age, shared/user path, APK/lure or subdomain/path anomalies, wrapped/encoded elements, and behavior>",
-    "why_suspicious": "<3-4 clear sentences explaining concrete signals and how attackers spoof senders or hide traps behind shorteners, legitimate shells, or dynamic pages>",
+    "what_was_detected": "<2-3 clear sentences detailing the source email/outer/short target, DNS/domain age, body text/lures, shared/user path, APK/lure or subdomain/path anomalies, wrapped/encoded elements, and behavior>",
+    "why_suspicious": "<3-4 clear sentences explaining concrete signals from sender, body, or both, and how attackers spoof senders or hide traps behind shorteners, legitimate shells, or dynamic pages>",
     "how_affects_user": "<2-3 clear sentences on real-world impact to device security, credentials, accounts, or data>",
-    "evidence": "<Concise MX/SPF/DMARC, age, redirects/scripts, sender/domain, shortener/shared-path/apk/cheat/gibberish/wrapper/params/path, technical telemetry>",
+    "evidence": "<Concise MX/SPF/DMARC, age, body-lures, redirects/scripts, sender/domain, shortener/shared-path/apk/cheat/gibberish/wrapper/params/path, technical telemetry>",
     "how_to_stay_safe": [
         "<Clear, plain-English instruction for a non-technical everyday user explaining what NOT to do right now and why>",
         "<Simple, step-by-step safe alternative action they should take instead>"
